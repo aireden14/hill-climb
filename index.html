@@ -84,6 +84,13 @@
     align-items:center; justify-content:center; font-size:20px; cursor:pointer;
     pointer-events:auto;
   }
+  #soundBtn {
+    position: fixed; top: calc(10px + env(safe-area-inset-top,0px)); right: 62px;
+    width: 40px; height: 40px; border-radius: 10px;
+    background: rgba(0,0,0,.28); color:#fff; z-index: 16; display:none;
+    align-items:center; justify-content:center; font-size:20px; cursor:pointer;
+    pointer-events:auto;
+  }
 
   /* Overlays */
   .overlay {
@@ -163,6 +170,7 @@
   <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub">РЕКОРД <span id="best">0</span> м</div></div>
   <div style="width:150px"></div>
 </div>
+<div id="soundBtn">🔊</div>
 <div id="pauseBtn">⏸</div>
 
 <div id="brake" class="hud-btn">◀</div>
@@ -331,6 +339,81 @@ function genItems(uptoX) {
   }
 }
 
+// ---------- Audio (synthesized, no assets) ----------
+const Audio2 = {
+  ctx:null, master:null, eng:null, engGain:null, engFilt:null, sub:null, subGain:null,
+  muted: localStorage.getItem('hc_muted')==='1',
+  ready:false,
+  init(){
+    if (this.ctx || this.muted) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    this.ctx = new AC();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = 0.9;
+    this.master.connect(this.ctx.destination);
+    // engine: sawtooth through lowpass + a sub sine
+    this.eng = this.ctx.createOscillator(); this.eng.type='sawtooth';
+    this.engFilt = this.ctx.createBiquadFilter(); this.engFilt.type='lowpass'; this.engFilt.frequency.value=700;
+    this.engGain = this.ctx.createGain(); this.engGain.gain.value=0;
+    this.eng.connect(this.engFilt); this.engFilt.connect(this.engGain); this.engGain.connect(this.master);
+    this.eng.frequency.value=70; this.eng.start();
+    this.sub = this.ctx.createOscillator(); this.sub.type='sine';
+    this.subGain = this.ctx.createGain(); this.subGain.gain.value=0;
+    this.sub.connect(this.subGain); this.subGain.connect(this.master);
+    this.sub.frequency.value=45; this.sub.start();
+    this.ready=true;
+  },
+  resume(){ if(this.ctx && this.ctx.state==='suspended') this.ctx.resume(); },
+  engine(speed, throttle){
+    if(!this.ready||this.muted) return;
+    const t = this.ctx.currentTime;
+    const f = 60 + Math.min(speed,1400)*0.11 + Math.abs(throttle)*40;
+    this.eng.frequency.setTargetAtTime(f, t, 0.05);
+    this.sub.frequency.setTargetAtTime(f*0.5, t, 0.05);
+    const g = throttle!==0 ? 0.06 : 0.02;
+    this.engGain.gain.setTargetAtTime(g, t, 0.08);
+    this.subGain.gain.setTargetAtTime(throttle!==0?0.05:0.02, t, 0.1);
+    this.engFilt.frequency.setTargetAtTime(500+Math.min(speed,1200)*0.8, t, 0.1);
+  },
+  engineOff(){ if(!this.ready) return; const t=this.ctx.currentTime;
+    this.engGain.gain.setTargetAtTime(0,t,0.1); this.subGain.gain.setTargetAtTime(0,t,0.1); },
+  blip(freq, dur, type, vol){
+    if(!this.ready||this.muted) return;
+    const t=this.ctx.currentTime;
+    const o=this.ctx.createOscillator(); o.type=type||'sine';
+    const g=this.ctx.createGain();
+    o.connect(g); g.connect(this.master);
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol||0.25, t+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.start(t); o.stop(t+dur+0.02);
+    return o;
+  },
+  coin(){ const o=this.blip(880,0.12,'square',0.18); if(o){o.frequency.setTargetAtTime(1320,this.ctx.currentTime+0.04,0.02);} },
+  fuel(){ this.blip(520,0.1,'triangle',0.2); setTimeout(()=>this.blip(780,0.16,'triangle',0.2),90); },
+  bonus(){ this.blip(660,0.1,'square',0.2); setTimeout(()=>this.blip(990,0.1,'square',0.2),80);
+           setTimeout(()=>this.blip(1320,0.16,'square',0.2),160); },
+  crash(){
+    if(!this.ready||this.muted) return;
+    const t=this.ctx.currentTime;
+    // noise burst
+    const buf=this.ctx.createBuffer(1, this.ctx.sampleRate*0.3, this.ctx.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length);
+    const src=this.ctx.createBufferSource(); src.buffer=buf;
+    const f=this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=400;
+    const g=this.ctx.createGain(); g.gain.value=0.4;
+    src.connect(f); f.connect(g); g.connect(this.master); src.start(t);
+    this.blip(120,0.3,'sawtooth',0.3);
+  },
+  setMuted(m){
+    this.muted=m; localStorage.setItem('hc_muted', m?'1':'0');
+    if(m && this.ready){ this.engineOff(); }
+  }
+};
+
 // ---------- Car physics ----------
 const Car = {
   x:0, y:0, vx:0, vy:0, angle:0, angVel:0,
@@ -349,6 +432,10 @@ const Car = {
     this.I = c.mass * (c.wheelBase*c.wheelBase*2 + c.chH*c.chH) / 6; // moment of inertia
     this.airborneTime = 0;
     this.flipTimer = 0;
+    this.airRotation = 0;
+    this.justLanded = false;
+    this.pendingFlips = 0;
+    this.lastAirTime = 0;
   },
   update(dt, throttle) {
     const c = this.cfg;
@@ -412,12 +499,19 @@ const Car = {
       }
     }
 
-    // air control: throttle tilts the car
+    // air control: throttle tilts the car; track rotation for flip bonus
     if (!anyGround) {
       this.airborneTime += dt;
+      this.airRotation += this.angVel * dt;
       torque += throttle * c.mass * 175;
     } else {
+      if (this.airborneTime > 0.35) {   // just landed after real air-time
+        this.lastAirTime = this.airborneTime;
+        this.pendingFlips = Math.floor(Math.abs(this.airRotation) / (Math.PI*2) + 0.2);
+        this.justLanded = true;
+      }
       this.airborneTime = 0;
+      this.airRotation = 0;
     }
 
     // integrate
@@ -470,6 +564,7 @@ function startGame() {
   document.getElementById('pause').classList.add('hidden');
   document.getElementById('topbar').style.display = 'flex';
   document.getElementById('pauseBtn').style.display = 'flex';
+  document.getElementById('soundBtn').style.display = 'flex';
   updateBest();
 }
 
@@ -485,6 +580,9 @@ function endGame(reason) {
   document.getElementById('gameover').classList.remove('hidden');
   document.getElementById('topbar').style.display = 'none';
   document.getElementById('pauseBtn').style.display = 'none';
+  document.getElementById('soundBtn').style.display = 'none';
+  Audio2.engineOff();
+  if (reason === 'Разбился!') Audio2.crash();
 }
 
 let toastTimer = null;
@@ -549,6 +647,11 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'30.07.2026, 16:20', items:[
+    '🔊 Звук: рёв двигателя (меняется от скорости), звон монет, сигнал топлива, грохот аварии. Кнопка 🔇 для отключения.',
+    '🎯 Бонусы за трюки: сальто в воздухе (+25 и больше) и время в полёте дают доп. монеты.',
+    '🌳 Деревья и кусты вдоль трассы, пыль из-под колёс.',
+  ]},
   { date:'28.07.2026, 14:30', items:[
     'Первый релиз «Холм Драйв».',
     'Физика подвески, 3 машины: Джип, Багги, Грузовик.',
@@ -571,13 +674,25 @@ document.getElementById('quitBtn').onclick = ()=>{ Game.state='menu';
   document.getElementById('pause').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden');
   document.getElementById('topbar').style.display='none';
-  document.getElementById('pauseBtn').style.display='none'; buildVehiclePicker(); };
-function pauseGame(){ if(Game.state!=='play')return; Game.state='pause';
+  document.getElementById('pauseBtn').style.display='none';
+  document.getElementById('soundBtn').style.display='none'; buildVehiclePicker(); };
+function pauseGame(){ if(Game.state!=='play')return; Game.state='pause'; Audio2.engineOff();
   document.getElementById('pause').classList.remove('hidden'); }
 function resumeGame(){ if(Game.state!=='pause')return; Game.state='play'; lastT=performance.now();
   document.getElementById('pause').classList.add('hidden'); }
 document.getElementById('pauseBtn').onclick = pauseGame;
 document.getElementById('resumeBtn').onclick = resumeGame;
+
+// ---------- Sound toggle + audio unlock on first gesture ----------
+const soundBtn = document.getElementById('soundBtn');
+function refreshSoundIcon(){ soundBtn.textContent = Audio2.muted ? '🔇' : '🔊'; }
+refreshSoundIcon();
+soundBtn.onclick = (e)=>{ e.stopPropagation(); Audio2.setMuted(!Audio2.muted);
+  if(!Audio2.muted){ Audio2.init(); Audio2.resume(); } refreshSoundIcon(); };
+// browsers require a user gesture to start audio
+function unlockAudio(){ if(!Audio2.muted){ Audio2.init(); Audio2.resume(); } }
+window.addEventListener('pointerdown', unlockAudio, {once:false});
+window.addEventListener('keydown', unlockAudio, {once:false});
 
 function updateBest(){ document.getElementById('best').textContent = Game.best; }
 
@@ -591,9 +706,23 @@ function frame(now) {
     // sub-step physics for stability
     const steps = 3;
     const sdt = dt/steps;
+    Car.justLanded = false;
     for (let s=0;s<steps;s++){
       Car.update(sdt, Game.throttle);
+      if (Car.justLanded) break;
     }
+
+    // flip / air-time bonus
+    if (Car.justLanded){
+      let bonus = 0, msg = '';
+      if (Car.pendingFlips >= 1){ bonus += Car.pendingFlips*25; msg = Car.pendingFlips>1?`Двойное сальто! +${bonus}`:`Сальто! +${bonus}`; }
+      else if (Car.lastAirTime > 0.85){ bonus += 8; msg = `В воздухе! +8`; }
+      if (bonus>0){ Game.coinsCollected += bonus; toast('🎯 '+msg); Audio2.bonus(); }
+    }
+
+    // engine sound
+    Audio2.engine(Math.abs(Car.vx), Game.throttle);
+
     // fuel
     if (Game.throttle !== 0) Game.fuel -= Car.cfg.fuelBurn * Math.abs(Game.throttle) * dt * 3.0;
     if (Game.fuel <= 0){ Game.fuel = 0; endGame('Кончилось топливо!'); }
@@ -601,20 +730,20 @@ function frame(now) {
     // distance
     Game.distance = Math.max(Game.distance, (Car.x - 200)/22);
 
-    // camera
+    // camera (snappier vertical follow so the car stays centred while climbing)
     const targetCamX = Car.x - W*0.35;
-    const targetCamY = Car.y - H*0.52;
-    Game.camX += (targetCamX - Game.camX)*Math.min(1,dt*6);
-    Game.camY += (targetCamY - Game.camY)*Math.min(1,dt*4);
+    const targetCamY = Car.y - H*0.5;
+    Game.camX += (targetCamX - Game.camX)*Math.min(1,dt*7);
+    Game.camY += (targetCamY - Game.camY)*Math.min(1,dt*7);
 
     // collectibles
     genItems(Car.x + 2500);
     for (const c of coins){
-      if(!c.taken && Math.hypot(c.x-Car.x, c.y-Car.y) < 46){ c.taken=true; Game.coinsCollected++; }
+      if(!c.taken && Math.hypot(c.x-Car.x, c.y-Car.y) < 46){ c.taken=true; Game.coinsCollected++; Audio2.coin(); }
     }
     for (const f of fuels){
       if(!f.taken && Math.hypot(f.x-Car.x, f.y-Car.y) < 52){ f.taken=true;
-        Game.fuel = Math.min(Car.cfg.maxFuel, Game.fuel+35); toast('+Топливо'); }
+        Game.fuel = Math.min(Car.cfg.maxFuel, Game.fuel+35); toast('+Топливо'); Audio2.fuel(); }
     }
 
     // head hit ground => game over (flip)
@@ -865,7 +994,17 @@ function drawCar(){
                 y:Car.y - Math.sin(Car.angle)*c.wheelBase*1.3 + 2,
                 r:6, life:1});
   }
+  // wheel dust kicked up when driving fast on the ground
+  if (Math.abs(Car.vx) > 220 && Game.throttle!==0){
+    for (const w of Car.wheels){
+      if (w.onGround && Math.random()<0.5){
+        dust.push({x:w.x - Math.sign(Car.vx)*c.wheelR*0.6, y:w.y+c.wheelR*0.7,
+                   r:3+Math.random()*3, life:1, vx:-Math.sign(Car.vx)*(1+Math.random()*2)});
+      }
+    }
+  }
   drawSmoke();
+  drawDust();
 }
 
 let smoke=[];
@@ -874,6 +1013,15 @@ function drawSmoke(){
     const p=smoke[i]; p.life-=0.03; p.r+=0.9; p.x-=1.2; p.y-=0.5;
     if(p.life<=0){ smoke.splice(i,1); continue; }
     ctx.fillStyle=`rgba(120,120,120,${p.life*0.4})`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
+  }
+}
+let dust=[];
+function drawDust(){
+  for(let i=dust.length-1;i>=0;i--){
+    const p=dust[i]; p.life-=0.045; p.r+=0.6; p.x+=p.vx; p.y-=0.6;
+    if(p.life<=0){ dust.splice(i,1); continue; }
+    ctx.fillStyle=`rgba(150,110,70,${p.life*0.5})`;
     ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
   }
 }
