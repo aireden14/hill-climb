@@ -142,8 +142,34 @@
   .veh { padding:10px 14px; border-radius:14px; background:rgba(255,255,255,.08);
     border:2px solid transparent; cursor:pointer; min-width:96px; }
   .veh.sel { border-color:#ffd54f; background:rgba(255,213,79,.15); }
+  .veh { position:relative; }
+  .veh.locked { opacity:.72; }
   .veh .emoji { font-size: 30px; }
   .veh .nm { font-size:13px; font-weight:700; margin-top:2px; }
+  .veh .price { font-size:11px; color:#ffd54f; font-weight:700; margin-top:3px;
+    display:flex; align-items:center; gap:3px; justify-content:center; }
+  .veh .lock { position:absolute; top:6px; right:8px; font-size:14px; }
+
+  .bank { display:flex; align-items:center; justify-content:center; gap:6px;
+    font-size:19px; font-weight:800; color:#ffe680; margin-bottom:12px; }
+  .bank .coin-ico { width:20px; height:20px; }
+
+  .shop { text-align:left; margin-top:8px; }
+  .shop-row { display:flex; align-items:center; gap:10px; margin:8px 0;
+    background:rgba(255,255,255,.06); border-radius:12px; padding:8px 10px; }
+  .shop-row .ico { font-size:20px; width:26px; text-align:center; }
+  .shop-row .info { flex:1; min-width:0; }
+  .shop-row .info .t { font-size:13px; font-weight:700; }
+  .lvlbar { display:flex; gap:3px; margin-top:4px; }
+  .lvlbar .seg { flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,.15); }
+  .lvlbar .seg.on { background:linear-gradient(90deg,#7dd83f,#4caf50); }
+  .buy { padding:7px 11px; border-radius:10px; border:none; font-weight:800; font-size:12px;
+    background:linear-gradient(180deg,#ffd54f,#ffa000); color:#3a2400; cursor:pointer;
+    white-space:nowrap; display:flex; align-items:center; gap:3px; }
+  .buy:disabled { background:rgba(255,255,255,.12); color:rgba(255,255,255,.4); cursor:default; }
+  .buy .coin-ico { width:13px; height:13px; border-width:1px; }
+  .buy.max { background:rgba(125,216,63,.2); color:#7dd83f; }
+  .coin-ico.mini { width:15px; height:15px; border-width:1px; }
 
   .credit {
     position: fixed; bottom: 6px; left: 50%; transform: translateX(-50%);
@@ -167,7 +193,7 @@
     <div class="fuel-wrap"><div id="fuelBar"></div></div>
     <div class="coins"><span class="coin-ico"></span><span id="coinCount">0</span></div>
   </div>
-  <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub">РЕКОРД <span id="best">0</span> м</div></div>
+  <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub">РЕКОРД <span id="best">0</span> м</div><div class="sub" id="biomeLabel" style="margin-top:2px;color:#ffe680"></div></div>
   <div style="width:150px"></div>
 </div>
 <div id="soundBtn">🔊</div>
@@ -189,8 +215,9 @@
     </div>
 
     <div class="tabpane active" id="tab-play">
-      <p>Гони по холмам как можно дальше. Собирай топливо и монеты, не переверни машину и не заглохни!</p>
+      <div class="bank"><span class="coin-ico"></span><span id="bankCoins">0</span></div>
       <div class="veh-row" id="vehRow"></div>
+      <div class="shop" id="shop"></div>
       <button class="btn" id="startBtn">🚗 Старт</button>
     </div>
 
@@ -199,7 +226,8 @@
         <b>▶ (справа)</b> — газ, ехать вперёд.<br>
         <b>◀ (слева)</b> — тормоз / задний ход.<br>
         На клавиатуре — <b>стрелки ←/→</b>.<br><br>
-        Наклоняй машину в воздухе газом/тормозом, чтобы приземлиться на колёса. Следи за топливом — жёлтые канистры пополняют бак.
+        Наклоняй машину в воздухе газом/тормозом, чтобы приземлиться на колёса. Следи за топливом — жёлтые канистры пополняют бак.<br><br>
+        Крути <b>сальто</b> ради бонусных монет. Собранные монеты копятся в гараже — трать их на <b>прокачку</b> машины и разблокировку новых. Чем дальше едешь, тем сменяются <b>биомы</b>: луг, пустыня, снег.
       </p>
     </div>
 
@@ -260,7 +288,52 @@ const VEHICLES = {
   buggy: { name:'Багги',  emoji:'🏎️', color:'#3fa9f5', engine:6400, mass:4.3, wheelBase:38, wheelR:18, chH:16, maxFuel:85,  fuelBurn:1.25 },
   truck: { name:'Грузовик',emoji:'🚚', color:'#8bc34a', engine:6000, mass:8.0, wheelBase:42, wheelR:24, chH:30, maxFuel:130, fuelBurn:0.85 },
 };
+const VEH_PRICE = { jeep:0, buggy:600, truck:1800 };
+const UPGRADES = [
+  { key:'engine', ico:'⚙️', name:'Двигатель', base:150 },
+  { key:'susp',   ico:'🛞', name:'Подвеска',  base:130 },
+  { key:'grip',   ico:'🧲', name:'Сцепление', base:130 },
+  { key:'fuel',   ico:'⛽', name:'Бак',        base:110 },
+];
+const MAX_LVL = 5;
+
+// ---------- Save / economy ----------
+const Save = (function(){
+  const def = { coins:0, unlocked:{jeep:true}, upg:{} };
+  let s;
+  try { s = JSON.parse(localStorage.getItem('hc_save')) || def; } catch(e){ s = def; }
+  s.coins = s.coins||0; s.unlocked = s.unlocked||{jeep:true}; s.unlocked.jeep = true; s.upg = s.upg||{};
+  for (const v of Object.keys(VEHICLES)){
+    s.upg[v] = s.upg[v] || {};
+    for (const u of UPGRADES) s.upg[v][u.key] = s.upg[v][u.key]||0;
+  }
+  function persist(){ localStorage.setItem('hc_save', JSON.stringify(s)); }
+  return {
+    data:s, persist,
+    addCoins(n){ s.coins+=n; persist(); },
+    lvl(v,k){ return s.upg[v][k]||0; },
+    upgCost(v,k){ const u=UPGRADES.find(x=>x.key===k); return Math.round(u.base*(1+this.lvl(v,k)*1.15)); },
+    canUpg(v,k){ return this.lvl(v,k)<MAX_LVL && s.coins>=this.upgCost(v,k); },
+    buyUpg(v,k){ if(!this.canUpg(v,k))return false; s.coins-=this.upgCost(v,k); s.upg[v][k]++; persist(); return true; },
+    unlock(v){ if(s.coins<VEH_PRICE[v])return false; s.coins-=VEH_PRICE[v]; s.unlocked[v]=true; persist(); return true; },
+    isUnlocked(v){ return !!s.unlocked[v]; },
+  };
+})();
+
+// effective vehicle cfg with upgrades applied
+function effectiveCfg(id){
+  const base = VEHICLES[id];
+  const u = Save.data.upg[id];
+  const cfg = Object.assign({}, base);
+  cfg.engine  = base.engine  * (1 + u.engine*0.09);          // +9%/lvl power
+  cfg.maxFuel = base.maxFuel * (1 + u.fuel*0.14);            // +14%/lvl tank
+  cfg.suspBonus = u.susp;   // handled in physics: stiffer/steadier suspension
+  cfg.gripBonus = u.grip;   // handled in physics: more traction
+  return cfg;
+}
+
 let selectedVehicle = localStorage.getItem('hc_vehicle') || 'jeep';
+if (!Save.isUnlocked(selectedVehicle)) selectedVehicle = 'jeep';
 
 // ---------- Terrain ----------
 const Terrain = {
@@ -420,7 +493,7 @@ const Car = {
   wheels:[],   // {lx,ly, x,y, spin, onGround}
   cfg:null,
   spawn() {
-    this.cfg = VEHICLES[selectedVehicle];
+    this.cfg = effectiveCfg(selectedVehicle);
     const c = this.cfg;
     this.x = 200;
     this.y = Terrain.heightAt(this.x) - c.wheelR - c.chH/2 - 6;
@@ -470,9 +543,9 @@ const Car = {
         const wvy = this.vy + this.angVel*rx;
         const vn = wvx*nx + wvy*ny;          // normal velocity
 
-        // suspension spring + damping
-        const k = 90 * c.mass;
-        const damp = 9 * c.mass;
+        // suspension spring + damping (upgraded suspension = stiffer & better damped)
+        const k = (90 + (c.suspBonus||0)*10) * c.mass;
+        const damp = (9 + (c.suspBonus||0)*1.6) * c.mass;
         let Fn = pen * k - vn * damp;
         if (Fn < 0) Fn = 0;
         let Nfx = nx*Fn, Nfy = ny*Fn;
@@ -485,7 +558,7 @@ const Car = {
         // rolling/brake friction along tangent (kills sliding when braking or coasting)
         const vt = wvx*tx + wvy*ty;
         let fric = -vt * (throttle < 0 ? 6 : (throttle>0?0.4:1.6)) * c.mass;
-        const maxF = Math.abs(Fn)*1.4;
+        const maxF = Math.abs(Fn)*(1.4 + (c.gripBonus||0)*0.22);   // upgraded grip = more traction
         if (fric > maxF) fric = maxF; if (fric < -maxF) fric = -maxF;
         Nfx += tx*fric; Nfy += ty*fric;
 
@@ -573,6 +646,8 @@ function endGame(reason) {
   Game.state = 'over';
   const d = Math.floor(Game.distance);
   if (d > Game.best) { Game.best = d; localStorage.setItem('hc_best', d); }
+  // bank the coins earned this run
+  Save.addCoins(Game.coinsCollected);
   document.getElementById('goTitle').textContent = reason;
   document.getElementById('goDist').textContent = d;
   document.getElementById('goCoins').textContent = Game.coinsCollected;
@@ -622,19 +697,56 @@ window.addEventListener('keyup', e=>{
   if (e.key==='ArrowLeft'||e.key==='a'){ keys.l=0; if(Game.throttle===-1)Game.throttle=0; brakeBtn.classList.remove('pressed'); }
 });
 
-// ---------- Menu / tabs / vehicles ----------
+// ---------- Menu / tabs / vehicles / shop ----------
+const COIN = '<span class="coin-ico mini"></span>';
+function refreshBank(){ document.getElementById('bankCoins').textContent = Save.data.coins; }
+
 function buildVehiclePicker() {
   const row = document.getElementById('vehRow');
   row.innerHTML = '';
   for (const [id, v] of Object.entries(VEHICLES)) {
+    const unlocked = Save.isUnlocked(id);
     const d = document.createElement('div');
-    d.className = 'veh' + (id===selectedVehicle?' sel':'');
-    d.innerHTML = `<div class="emoji">${v.emoji}</div><div class="nm">${v.name}</div>`;
-    d.onclick = ()=>{ selectedVehicle=id; localStorage.setItem('hc_vehicle',id); buildVehiclePicker(); };
+    d.className = 'veh' + (id===selectedVehicle?' sel':'') + (unlocked?'':' locked');
+    let html = `<div class="emoji">${v.emoji}</div><div class="nm">${v.name}</div>`;
+    if (!unlocked) html += `<div class="lock">🔒</div><div class="price">${COIN}${VEH_PRICE[id]}</div>`;
+    d.innerHTML = html;
+    d.onclick = ()=>{
+      if (Save.isUnlocked(id)){
+        selectedVehicle=id; localStorage.setItem('hc_vehicle',id);
+      } else {
+        if (Save.unlock(id)){ selectedVehicle=id; localStorage.setItem('hc_vehicle',id); toast('🔓 '+v.name+' куплен!'); Audio2.bonus(); }
+        else { toast('Не хватает монет'); }
+      }
+      rebuildMenu();
+    };
     row.appendChild(d);
   }
 }
-buildVehiclePicker();
+
+function buildShop() {
+  const shop = document.getElementById('shop');
+  shop.innerHTML = '';
+  const v = selectedVehicle;
+  for (const u of UPGRADES){
+    const lvl = Save.lvl(v,u.key);
+    const maxed = lvl>=MAX_LVL;
+    const cost = Save.upgCost(v,u.key);
+    const segs = Array.from({length:MAX_LVL},(_,i)=>`<div class="seg ${i<lvl?'on':''}"></div>`).join('');
+    const row = document.createElement('div');
+    row.className='shop-row';
+    row.innerHTML = `<div class="ico">${u.ico}</div>
+      <div class="info"><div class="t">${u.name}</div><div class="lvlbar">${segs}</div></div>
+      <button class="buy ${maxed?'max':''}" ${(maxed||Save.data.coins<cost)?'disabled':''}>
+        ${maxed?'МАКС':COIN+cost}</button>`;
+    const btn = row.querySelector('.buy');
+    if(!maxed) btn.onclick = ()=>{ if(Save.buyUpg(v,u.key)){ Audio2.coin(); rebuildMenu(); } };
+    shop.appendChild(row);
+  }
+}
+
+function rebuildMenu(){ buildVehiclePicker(); buildShop(); refreshBank(); }
+rebuildMenu();
 
 document.querySelectorAll('.tab').forEach(t=>{
   t.onclick = ()=>{
@@ -647,6 +759,11 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'31.07.2026, 12:40', items:[
+    '💰 Гараж: монеты копятся между заездами. Прокачивай двигатель, подвеску, сцепление и бак.',
+    '🔓 Разблокировка машин за монеты (Багги, Грузовик).',
+    '🏜️ Биомы трассы сменяются по дистанции: Луг → Пустыня → Снег.',
+  ]},
   { date:'30.07.2026, 16:20', items:[
     '🔊 Звук: рёв двигателя (меняется от скорости), звон монет, сигнал топлива, грохот аварии. Кнопка 🔇 для отключения.',
     '🎯 Бонусы за трюки: сальто в воздухе (+25 и больше) и время в полёте дают доп. монеты.',
@@ -669,13 +786,13 @@ document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
 document.getElementById('menuBtn').onclick = ()=>{ Game.state='menu';
   document.getElementById('gameover').classList.add('hidden');
-  document.getElementById('menu').classList.remove('hidden'); buildVehiclePicker(); };
+  document.getElementById('menu').classList.remove('hidden'); rebuildMenu(); };
 document.getElementById('quitBtn').onclick = ()=>{ Game.state='menu';
   document.getElementById('pause').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden');
   document.getElementById('topbar').style.display='none';
   document.getElementById('pauseBtn').style.display='none';
-  document.getElementById('soundBtn').style.display='none'; buildVehiclePicker(); };
+  document.getElementById('soundBtn').style.display='none'; rebuildMenu(); };
 function pauseGame(){ if(Game.state!=='play')return; Game.state='pause'; Audio2.engineOff();
   document.getElementById('pause').classList.remove('hidden'); }
 function resumeGame(){ if(Game.state!=='pause')return; Game.state='play'; lastT=performance.now();
@@ -750,6 +867,7 @@ function frame(now) {
     checkCrash();
 
     // HUD
+    document.getElementById('biomeLabel').textContent = biomeAt(Game.distance).name;
     document.getElementById('dist').textContent = Math.floor(Game.distance);
     document.getElementById('coinCount').textContent = Game.coinsCollected;
     const fb = document.getElementById('fuelBar');
@@ -778,23 +896,52 @@ function checkCrash() {
 }
 
 // ---------- Render ----------
+// ---------- Biomes (change with distance: луг → пустыня → снег) ----------
+const BIOMES = [
+  { name:'Луг',     sky:['#4ea6e8','#8fd0f2','#c9ecfb'], dirt:['#8a5a2b','#5e3c18'],
+    grass:['#5fa832','#7bc94a'], para:['#bfe3a8','#a4d67f'], tree:['#4e9e35','#5cb03a'], bush:'#5cb03a', sun:'#fff6c0' },
+  { name:'Пустыня', sky:['#f0a94e','#f7d98f','#fdeecb'], dirt:['#c79a5b','#966d34'],
+    grass:['#d9a94a','#e6c06a'], para:['#e6cd97','#d3b06e'], tree:['#3f8f4a','#4fa055'], bush:'#c9a24a', sun:'#fff3d0' },
+  { name:'Снег',    sky:['#8fb7d6','#bcd8ec','#eaf5fc'], dirt:['#7c8a99','#59636e'],
+    grass:['#e2eef7','#ffffff'], para:['#d7e6ef','#c2d6e3'], tree:['#3f7a4a','#4a8a55'], bush:'#e6eff6', sun:'#ffffff' },
+];
+const ZONE = 520;  // metres per biome
+function hexLerp(a,b,t){
+  const pa=parseInt(a.slice(1),16), pb=parseInt(b.slice(1),16);
+  const ar=pa>>16,ag=(pa>>8)&255,ab=pa&255, br=pb>>16,bg=(pb>>8)&255,bb=pb&255;
+  const r=Math.round(ar+(br-ar)*t), g=Math.round(ag+(bg-ag)*t), bl=Math.round(ab+(bb-ab)*t);
+  return `rgb(${r},${g},${bl})`;
+}
+function biomeAt(dist){
+  const idx = Math.floor(dist/ZONE), from = BIOMES[((idx%3)+3)%3], to = BIOMES[(((idx+1)%3)+3)%3];
+  const t = dist - idx*ZONE;
+  const f = t > ZONE-70 ? (t-(ZONE-70))/70 : 0;   // blend over last 70m
+  if (f<=0) return from;
+  const mixArr=(x,y)=>x.map((c,i)=>hexLerp(c,y[i],f));
+  return { name: f>0.5?to.name:from.name, sky:mixArr(from.sky,to.sky), dirt:mixArr(from.dirt,to.dirt),
+    grass:mixArr(from.grass,to.grass), para:mixArr(from.para,to.para), tree:mixArr(from.tree,to.tree),
+    bush:hexLerp(from.bush,to.bush,f), sun:hexLerp(from.sun,to.sun,f) };
+}
+let CB = BIOMES[0];  // current biome for the frame
+
 function render() {
+  CB = biomeAt(Game.distance);
   // sky gradient
   const sky = ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0,'#4ea6e8'); sky.addColorStop(0.6,'#8fd0f2'); sky.addColorStop(1,'#c9ecfb');
+  sky.addColorStop(0,CB.sky[0]); sky.addColorStop(0.6,CB.sky[1]); sky.addColorStop(1,CB.sky[2]);
   ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
 
   // sun
   ctx.save();
   ctx.globalAlpha = 0.9;
-  ctx.fillStyle = '#fff6c0';
+  ctx.fillStyle = CB.sun;
   ctx.beginPath(); ctx.arc(70, 80, 34, 0, Math.PI*2); ctx.fill();
   ctx.globalAlpha=0.25; ctx.beginPath(); ctx.arc(70,80,50,0,Math.PI*2); ctx.fill();
   ctx.restore();
 
   // parallax hills (background)
-  drawParallax(0.25, '#bfe3a8', H*0.55);
-  drawParallax(0.45, '#a4d67f', H*0.62);
+  drawParallax(0.25, CB.para[0], H*0.55);
+  drawParallax(0.45, CB.para[1], H*0.62);
 
   // clouds
   drawClouds();
@@ -848,7 +995,7 @@ function drawDecorations(){
       ctx.fillStyle = '#7a4a22';
       ctx.fillRect(dx-4*s, gy-30*s, 8*s, 32*s);
       // canopy
-      ctx.fillStyle = i%2 ? '#4e9e35' : '#5cb03a';
+      ctx.fillStyle = i%2 ? CB.tree[0] : CB.tree[1];
       ctx.beginPath();
       ctx.arc(dx, gy-40*s, 22*s, 0, 7);
       ctx.arc(dx-16*s, gy-30*s, 15*s, 0, 7);
@@ -859,7 +1006,7 @@ function drawDecorations(){
       Terrain.ensure(dx);
       const gy = Terrain.heightAt(dx);
       const s = 0.7 + hash(i+5.1)*0.5;
-      ctx.fillStyle = '#5cb03a';
+      ctx.fillStyle = CB.bush;
       ctx.beginPath();
       ctx.arc(dx-10*s, gy-6*s, 11*s, 0, 7);
       ctx.arc(dx+10*s, gy-6*s, 11*s, 0, 7);
@@ -901,11 +1048,11 @@ function drawTerrain(){
   ctx.closePath();
   // dirt body
   const grad = ctx.createLinearGradient(0, Terrain.baseY-100, 0, Terrain.baseY+260);
-  grad.addColorStop(0,'#8a5a2b'); grad.addColorStop(1,'#5e3c18');
+  grad.addColorStop(0,CB.dirt[0]); grad.addColorStop(1,CB.dirt[1]);
   ctx.fillStyle = grad; ctx.fill();
 
   // grass top stripe
-  ctx.lineWidth = 14; ctx.strokeStyle = '#5fa832';
+  ctx.lineWidth = 14; ctx.strokeStyle = CB.grass[0];
   ctx.beginPath();
   let first=true;
   for (let x = left; x <= right; x += step){
@@ -913,7 +1060,7 @@ function drawTerrain(){
     if(first){ctx.moveTo(x,y);first=false;} else ctx.lineTo(x,y);
   }
   ctx.stroke();
-  ctx.lineWidth = 5; ctx.strokeStyle = '#7bc94a';
+  ctx.lineWidth = 5; ctx.strokeStyle = CB.grass[1];
   ctx.beginPath(); first=true;
   for (let x = left; x <= right; x += step){
     const y = Terrain.heightAt(x)-4;
