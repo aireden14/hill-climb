@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Холм Драйв</title>
+<meta name="description" content="Холм Драйв — гонки по холмам с физикой, прокачкой машин и сменой биомов.">
+<meta name="theme-color" content="#6ec6f2">
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Холм Драйв">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>
   * {
     margin: 0;
@@ -284,9 +293,9 @@ resize();
 
 // ---------- Vehicles ----------
 const VEHICLES = {
-  jeep:  { name:'Джип',   emoji:'🚙', color:'#e14b2a', engine:5200, mass:5.5, wheelBase:34, wheelR:20, chH:22, maxFuel:100, fuelBurn:1.0 },
-  buggy: { name:'Багги',  emoji:'🏎️', color:'#3fa9f5', engine:6400, mass:4.3, wheelBase:38, wheelR:18, chH:16, maxFuel:85,  fuelBurn:1.25 },
-  truck: { name:'Грузовик',emoji:'🚚', color:'#8bc34a', engine:6000, mass:8.0, wheelBase:42, wheelR:24, chH:30, maxFuel:130, fuelBurn:0.85 },
+  jeep:  { name:'Джип',   emoji:'🚙', color:'#e14b2a', shape:'jeep',  engine:5200, mass:5.5, wheelBase:34, wheelR:20, chH:22, maxFuel:100, fuelBurn:1.0 },
+  buggy: { name:'Багги',  emoji:'🏎️', color:'#3fa9f5', shape:'buggy', engine:6400, mass:4.3, wheelBase:38, wheelR:18, chH:16, maxFuel:85,  fuelBurn:1.25 },
+  truck: { name:'Грузовик',emoji:'🚚', color:'#8bc34a', shape:'truck', engine:6000, mass:8.0, wheelBase:42, wheelR:24, chH:30, maxFuel:130, fuelBurn:0.85 },
 };
 const VEH_PRICE = { jeep:0, buggy:600, truck:1800 };
 const UPGRADES = [
@@ -759,6 +768,11 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'31.07.2026, 18:10', items:[
+    '🚗 У каждой машины свой силуэт: внедорожник, багги с каркасом, грузовик с кузовом.',
+    '🌦️ Погода под биом: снегопад в снегах, песчаные порывы в пустыне, пыльца на лугу.',
+    '📱 Теперь ставится на телефон как приложение (иконка, полный экран, оффлайн).',
+  ]},
   { date:'31.07.2026, 12:40', items:[
     '💰 Гараж: монеты копятся между заездами. Прокачивай двигатель, подвеску, сцепление и бак.',
     '🔓 Разблокировка машин за монеты (Багги, Грузовик).',
@@ -962,6 +976,41 @@ function render() {
   if (Game.state!=='menu') drawCar();
 
   ctx.restore();
+
+  // weather ambience (screen space, on top of the world)
+  drawWeather();
+}
+
+// ---------- Weather particles per biome ----------
+let flakes=[];
+function drawWeather(){
+  const idx = Game.state==='play' ? (((Math.floor(Game.distance/ZONE)%3)+3)%3) : 0;
+  while (flakes.length < 95) flakes.push({x:Math.random()*W, y:Math.random()*H,
+    r:1+Math.random()*2.6, ph:Math.random()*7, sp:0.4+Math.random()*0.9});
+  if (idx===2){                 // snow
+    ctx.fillStyle='rgba(255,255,255,.9)';
+    for(const f of flakes){
+      f.y += f.sp*2.3; f.x += Math.sin((f.y+f.ph*40)*0.02)*0.7;
+      if(f.y>H){ f.y=-4; f.x=Math.random()*W; }
+      if(f.x>W) f.x-=W; if(f.x<0) f.x+=W;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,7); ctx.fill();
+    }
+  } else if (idx===1){          // desert — blowing sand streaks
+    ctx.strokeStyle='rgba(224,196,140,.28)'; ctx.lineWidth=2; ctx.lineCap='round';
+    for(const f of flakes){
+      f.x += f.sp*7+4;
+      if(f.x>W+20){ f.x=-20; f.y=Math.random()*H; }
+      ctx.beginPath(); ctx.moveTo(f.x,f.y); ctx.lineTo(f.x-15,f.y+2); ctx.stroke();
+    }
+  } else {                      // meadow — gentle drifting pollen
+    ctx.fillStyle='rgba(255,250,180,.45)';
+    for(let i=0;i<flakes.length;i+=3){
+      const f=flakes[i];
+      f.y += Math.sin(f.ph+f.x*0.01)*0.25+0.25; f.x += 0.45;
+      if(f.y>H) f.y=0; if(f.x>W) f.x=0;
+      ctx.beginPath(); ctx.arc(f.x,f.y,1.6,0,7); ctx.fill();
+    }
+  }
 }
 
 function drawParallax(factor, color, baseline){
@@ -1118,21 +1167,8 @@ function drawCar(){
     ctx.restore();
   }
 
-  // chassis body
-  const bw = c.wheelBase*2+16, bh = c.chH;
-  ctx.fillStyle = c.color;
-  roundRect(-bw/2, -bh/2, bw, bh, 8); ctx.fill();
-  // cabin
-  ctx.fillStyle = shade(c.color, -20);
-  roundRect(-bw*0.18, -bh*1.4, bw*0.5, bh*0.95, 6); ctx.fill();
-  // window
-  ctx.fillStyle = '#bfeaff';
-  roundRect(-bw*0.10, -bh*1.25, bw*0.34, bh*0.62, 4); ctx.fill();
-  // driver head
-  ctx.fillStyle='#f4c8a0'; ctx.beginPath();
-  ctx.arc(-bw*0.02, -bh*1.05, bh*0.28, 0, 7); ctx.fill();
-  ctx.fillStyle='#e33'; // helmet cap
-  ctx.beginPath(); ctx.arc(-bw*0.02, -bh*1.12, bh*0.30, Math.PI, 0); ctx.fill();
+  // chassis body — distinct silhouette per vehicle
+  drawBody(c);
   ctx.restore();
 
   // exhaust smoke (world space, behind car)
@@ -1152,6 +1188,58 @@ function drawCar(){
   }
   drawSmoke();
   drawDust();
+}
+
+function drawHead(x, y, r, capColor){
+  ctx.fillStyle='#f4c8a0'; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.fillStyle=capColor; ctx.beginPath(); ctx.arc(x, y-r*0.25, r*1.05, Math.PI, 0); ctx.fill();
+}
+function drawBody(c){
+  const bw = c.wheelBase*2+16, bh = c.chH;
+  if (c.shape === 'buggy'){
+    // low open-frame buggy with roll cage + spoiler
+    ctx.fillStyle = c.color;
+    roundRect(-bw*0.46, -bh*0.5, bw*0.92, bh, 6); ctx.fill();
+    // seat / floor
+    ctx.fillStyle = shade(c.color,-25);
+    roundRect(-bw*0.30, -bh*0.9, bw*0.42, bh*0.7, 4); ctx.fill();
+    // roll cage
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 4; ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(bw*0.14, -bh*0.4); ctx.lineTo(bw*0.02, -bh*1.7);
+    ctx.lineTo(-bw*0.34, -bh*1.7); ctx.lineTo(-bw*0.30, -bh*0.4);
+    ctx.moveTo(-bw*0.34, -bh*1.7); ctx.lineTo(-bw*0.46, -bh*0.3);
+    ctx.stroke();
+    drawHead(-bh*0.05, -bh*1.05, bh*0.42, '#1e88e5');
+    // rear spoiler
+    ctx.fillStyle = '#333';
+    roundRect(-bw*0.56, -bh*0.9, bw*0.16, bh*0.22, 3); ctx.fill();
+    ctx.fillRect(-bw*0.50, -bh*0.9, 4, bh*0.5);
+  } else if (c.shape === 'truck'){
+    // flatbed cargo truck: cab in front, long bed behind
+    ctx.fillStyle = shade(c.color,-8);
+    roundRect(-bw*0.5, -bh*0.35, bw, bh*0.85, 6); ctx.fill();      // chassis / bed floor
+    // cargo box (rear)
+    ctx.fillStyle = c.color;
+    roundRect(-bw*0.5, -bh*1.15, bw*0.62, bh*0.9, 5); ctx.fill();
+    ctx.fillStyle = shade(c.color,-22);
+    for(let i=0;i<3;i++){ ctx.fillRect(-bw*0.42+i*bw*0.19, -bh*1.1, 3, bh*0.8); } // slats
+    // cab (front)
+    ctx.fillStyle = shade(c.color,15);
+    roundRect(bw*0.16, -bh*1.1, bw*0.34, bh*0.85, 5); ctx.fill();
+    ctx.fillStyle = '#bfeaff';
+    roundRect(bw*0.22, -bh*0.98, bw*0.22, bh*0.5, 3); ctx.fill();
+    drawHead(bw*0.30, -bh*0.72, bh*0.2, '#e33');
+  } else {
+    // jeep / SUV (default)
+    ctx.fillStyle = c.color;
+    roundRect(-bw/2, -bh/2, bw, bh, 8); ctx.fill();
+    ctx.fillStyle = shade(c.color, -20);
+    roundRect(-bw*0.18, -bh*1.4, bw*0.5, bh*0.95, 6); ctx.fill();
+    ctx.fillStyle = '#bfeaff';
+    roundRect(-bw*0.10, -bh*1.25, bw*0.34, bh*0.62, 4); ctx.fill();
+    drawHead(-bw*0.02, -bh*1.05, bh*0.28, '#e33');
+  }
 }
 
 let smoke=[];
@@ -1196,6 +1284,11 @@ document.addEventListener('gesturestart', e=>e.preventDefault());
 
 updateBest();
 requestAnimationFrame(frame);
+
+// PWA: register service worker for offline play (secure contexts: https + localhost; ignored on file://)
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
 </script>
 </body>
 </html>
