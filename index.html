@@ -163,6 +163,24 @@
     font-size:19px; font-weight:800; color:#ffe680; margin-bottom:12px; }
   .bank .coin-ico { width:20px; height:20px; }
 
+  .modeseg { display:flex; gap:6px; background:rgba(0,0,0,.22); border-radius:14px;
+    padding:5px; margin-bottom:14px; }
+  .modeseg .m { flex:1; text-align:center; padding:9px 6px; border-radius:10px; cursor:pointer;
+    font-weight:700; font-size:14px; color:#cfd8e3; transition:.15s; }
+  .modeseg .m .sub { font-size:10px; opacity:.7; font-weight:600; display:block; margin-top:2px; }
+  .modeseg .m.on { background:linear-gradient(180deg,#7fd0ff,#3a9be0); color:#04263c;
+    box-shadow:0 4px 12px rgba(58,155,224,.4); }
+
+  #questChip {
+    position: fixed; top: calc(58px + env(safe-area-inset-top,0px)); left: 50%;
+    transform: translateX(-50%); display:none; align-items:center; gap:7px;
+    background: rgba(20,30,45,.72); color:#fff; padding:7px 14px; border-radius: 20px;
+    font-size: 14px; font-weight:600; z-index: 15; max-width: 84vw;
+    border:1px solid rgba(255,255,255,.14); box-shadow:0 4px 14px rgba(0,0,0,.3);
+  }
+  #questChip .q-ico { font-size:16px; }
+  #questChip .q-txt b { color:#ffd54f; margin-left:4px; }
+
   .shop { text-align:left; margin-top:8px; }
   .shop-row { display:flex; align-items:center; gap:10px; margin:8px 0;
     background:rgba(255,255,255,.06); border-radius:12px; padding:8px 10px; }
@@ -205,6 +223,7 @@
   <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub">РЕКОРД <span id="best">0</span> м</div><div class="sub" id="biomeLabel" style="margin-top:2px;color:#ffe680"></div></div>
   <div style="width:150px"></div>
 </div>
+<div id="questChip"></div>
 <div id="soundBtn">🔊</div>
 <div id="pauseBtn">⏸</div>
 
@@ -225,9 +244,14 @@
 
     <div class="tabpane active" id="tab-play">
       <div class="bank"><span class="coin-ico"></span><span id="bankCoins">0</span></div>
+      <div class="modeseg" id="modeSeg">
+        <div class="m on" data-mode="run">🏁 Заезд<span class="sub">на рекорд</span></div>
+        <div class="m" data-mode="endless">♾️ Бесконечный<span class="sub">квесты и события</span></div>
+      </div>
       <div class="veh-row" id="vehRow"></div>
       <div class="shop" id="shop"></div>
       <button class="btn" id="startBtn">🚗 Старт</button>
+      <button class="btn alt" id="gamepassBtn" style="display:none">← В GamePass</button>
     </div>
 
     <div class="tabpane" id="tab-how">
@@ -350,17 +374,23 @@ const Terrain = {
   pts: [],            // control point heights (screen y)
   baseY: 0,
   amp: 90,
-  reset() {
+  mode:'run',
+  features:[],        // [{type, s, e, x0, x1}] injected structures (endless mode)
+  nextFeatIdx: 1e9,
+  reset(mode) {
+    this.mode = mode || 'run';
     this.baseY = H * 0.62;
     this.amp = Math.max(70, H * 0.14);
     this.pts = [];
+    this.features = [];
+    // first feature only after a warm-up stretch (endless only)
+    this.nextFeatIdx = (this.mode==='endless') ? 46 : 1e9;
     // flat start
     for (let i = 0; i < 12; i++) this.pts.push(this.baseY);
     for (let i = 12; i < 300; i++) this.pts.push(null);
     this._fillFrom(12);
   },
   _fillFrom(startIdx) {
-    let prev = this.pts[startIdx-1] ?? this.baseY;
     let phase = startIdx * 0.13;
     for (let i = startIdx; i < this.pts.length; i++) {
       const diff = (i - 12);
@@ -370,6 +400,57 @@ const Terrain = {
       const target = this.baseY - wave * this.amp * (0.35 + rough) + (Math.random()-0.5)*20*rough;
       this.pts[i] = target;
     }
+    if (this.mode==='endless') this._injectFeatures(startIdx);
+  },
+  // difficulty grows with distance (index): features get closer & rougher
+  _injectFeatures(fromIdx) {
+    const len = this.pts.length;
+    while (this.nextFeatIdx < len - 20) {
+      const s = this.nextFeatIdx;
+      if (s < fromIdx) { this.nextFeatIdx = fromIdx; continue; }
+      const prog = Math.min(1, s / 900);               // 0..1 over first ~22km of index
+      const amp = this.amp * (0.6 + prog*0.7);
+      const base = this.pts[s-1] ?? this.baseY;
+      // choose feature type — more pits/ramps as it gets harder
+      const roll = Math.random();
+      let span;
+      if (roll < 0.30 + prog*0.15){                    // JUMP RAMP (перепрыгнуть)
+        span = 6;
+        this.pts[s]   = base - amp*0.35;
+        this.pts[s+1] = base - amp*0.85;
+        this.pts[s+2] = base - amp*1.25;               // lip
+        this.pts[s+3] = base + amp*0.55;               // drop after the lip
+        this.pts[s+4] = base + amp*0.35;
+        this.pts[s+5] = base + amp*0.10;
+        this.features.push({type:'ramp', s, e:s+6, x0:s*this.seg, x1:(s+6)*this.seg});
+      } else if (roll < 0.55 + prog*0.20){             // PIT / chasm (пропасть)
+        span = 4;
+        const depth = amp*(1.1 + prog*0.6);
+        this.pts[s]   = base - amp*0.15;               // small take-off lip
+        this.pts[s+1] = base + depth;
+        this.pts[s+2] = base + depth;
+        this.pts[s+3] = base;
+        this.features.push({type:'pit', s, e:s+4, x0:s*this.seg, x1:(s+4)*this.seg});
+      } else {                                         // MINE (шахта)
+        span = 18;
+        const dip = amp*1.15;
+        for (let k=0;k<span;k++){
+          let h;
+          if (k<3)       h = base + dip*(k/3);          // descend in
+          else if (k>=span-3) h = base + dip*((span-1-k)/3); // ascend out
+          else           h = base + dip + Math.sin(k*1.1)*amp*0.28; // rough corridor
+          this.pts[s+k] = h;
+        }
+        this.features.push({type:'mine', s, e:s+span, x0:s*this.seg, x1:(s+span)*this.seg});
+      }
+      // gap before next feature shrinks with progress
+      const gap = Math.max(11, Math.round(30 - prog*16)) + (Math.random()*8|0);
+      this.nextFeatIdx = s + span + gap;
+    }
+  },
+  featureAt(x){
+    for (const f of this.features){ if (x>=f.x0 && x<=f.x1) return f; }
+    return null;
   },
   ensure(xWorld) {
     const idx = Math.floor(xWorld / this.seg) + 40;
@@ -402,11 +483,12 @@ let coins = [];    // {x,y,taken}
 let fuels = [];    // {x,y,taken}
 let nextItemX = 0;
 function genItems(uptoX) {
+  const fuelChance = Game.mode==='endless' ? 0.24 : 0.16;   // more fuel to keep the endless drive going
   while (nextItemX < uptoX) {
     nextItemX += 120 + Math.random()*160;
     const gy = Terrain.heightAt(nextItemX);
     const r = Math.random();
-    if (r < 0.16) {
+    if (r < fuelChance) {
       fuels.push({ x: nextItemX, y: gy - 34, taken:false });
     } else {
       // arc of coins
@@ -581,14 +663,16 @@ const Car = {
       }
     }
 
-    // air control: throttle tilts the car; track rotation for flip bonus
+    // air control: throttle tilts the car; track rotation + air distance
     if (!anyGround) {
+      if (this.airborneTime === 0) this.airStartX = this.x;   // just left the ground
       this.airborneTime += dt;
       this.airRotation += this.angVel * dt;
       torque += throttle * c.mass * 175;
     } else {
       if (this.airborneTime > 0.35) {   // just landed after real air-time
         this.lastAirTime = this.airborneTime;
+        this.lastAirDist = Math.abs(this.x - (this.airStartX||this.x)) / 22;   // metres
         this.pendingFlips = Math.floor(Math.abs(this.airRotation) / (Math.PI*2) + 0.2);
         this.justLanded = true;
       }
@@ -620,17 +704,19 @@ const Car = {
 // ---------- Game state ----------
 const Game = {
   state:'menu',      // menu, play, pause, over
+  mode:'run',        // 'run' (заезд) | 'endless' (бесконечный + квесты + события)
   camX:0, camY:0,
   fuel:100,
   coinsCollected:0,
   distance:0,
   best: +(localStorage.getItem('hc_best')||0),
+  bestEndless: +(localStorage.getItem('hc_best_endless')||0),
   throttle:0,
   time:0,
 };
 
 function startGame() {
-  Terrain.reset();
+  Terrain.reset(Game.mode);
   Car.spawn();
   coins = []; fuels = []; nextItemX = 350;
   genItems(3000);
@@ -641,6 +727,8 @@ function startGame() {
   Game.throttle = 0;
   Game.camX = Car.x - W*0.35;
   Game.camY = Car.y - H*0.5;
+  Game._lastMine = null; Game._pendingJumpPit = null;
+  if (Game.mode==='endless') Quest.reset(); else Quest.clear();
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('gameover').classList.add('hidden');
   document.getElementById('pause').classList.add('hidden');
@@ -650,21 +738,67 @@ function startGame() {
   updateBest();
 }
 
+// ---------- Quests (endless mode) ----------
+const QUEST_TYPES = [
+  { id:'coins', ico:'🪙', gen:p=>({target: 8 + Math.round(p*22)}),  label:t=>`Собери ${t} монет`,           reward:p=>60+Math.round(p*70) },
+  { id:'flip',  ico:'🔄', gen:p=>({target: 1 + Math.round(p*2)}),   label:t=>`Сделай ${t} сальто`,           reward:p=>80+Math.round(p*80) },
+  { id:'air',   ico:'🪂', gen:p=>({target: 20 + Math.round(p*40)}), label:t=>`Пролети ${t} м за один прыжок`, reward:p=>90+Math.round(p*80) },
+  { id:'dist',  ico:'📏', gen:p=>({target: 200 + Math.round(p*400)}),label:t=>`Проедь ${t} м`,                reward:p=>70+Math.round(p*80) },
+  { id:'mine',  ico:'⛏️', gen:p=>({target: 1}),                      label:()=>`Заедь в шахту`,               reward:p=>90+Math.round(p*60) },
+  { id:'jump',  ico:'🕳️', gen:p=>({target: 1 + Math.round(p*1.5)}), label:t=>t>1?`Перепрыгни ${t} пропасти`:`Перепрыгни пропасть`, reward:p=>100+Math.round(p*70) },
+];
+const Quest = {
+  active:null, progress:0, startDist:0, done:0,
+  reset(){ this.done=0; this.pick(); },
+  clear(){ this.active=null; this._render(); },
+  pick(){
+    const p = Math.min(1, Game.distance/2500);
+    let t; do { t = QUEST_TYPES[Math.random()*QUEST_TYPES.length|0]; } while (this.active && t.id===this.active.id && QUEST_TYPES.length>1);
+    const g = t.gen(p);
+    this.active = { id:t.id, ico:t.ico, target:g.target, reward:t.reward(p), label:t.label(g.target) };
+    this.progress = 0; this.startDist = Game.distance;
+    this._render();
+  },
+  add(id, n){ if(this.active && this.active.id===id){ this.progress += n; this._check(); } },
+  tickDistance(){ if(this.active && this.active.id==='dist'){ this.progress = Math.floor(Game.distance - this.startDist); this._render(); this._check(true); } },
+  air(distM){ if(this.active && this.active.id==='air' && distM>=this.active.target){ this.progress=this.active.target; this._check(); } },
+  _check(silent){
+    if(!this.active) return;
+    if(this.progress >= this.active.target){
+      const r = this.active.reward;
+      Game.coinsCollected += r; this.done++;
+      toast(`✅ Задание: +${r}`); Audio2.bonus();
+      this.pick();
+    } else if(!silent){ this._render(); }
+  },
+  _render(){
+    const el = document.getElementById('questChip');
+    if(!el) return;
+    if(!this.active || Game.mode!=='endless'){ el.style.display='none'; return; }
+    el.style.display='flex';
+    const a=this.active;
+    const showProg = (a.id!=='mine');
+    el.innerHTML = `<span class="q-ico">${a.ico}</span><span class="q-txt">${a.label}${showProg?` <b>${Math.min(this.progress,a.target)}/${a.target}</b>`:''}</span>`;
+  }
+};
+
 function endGame(reason) {
   if (Game.state === 'over') return;
   Game.state = 'over';
   const d = Math.floor(Game.distance);
-  if (d > Game.best) { Game.best = d; localStorage.setItem('hc_best', d); }
+  if (Game.mode==='endless'){ if (d>Game.bestEndless){ Game.bestEndless=d; localStorage.setItem('hc_best_endless', d); } }
+  else if (d > Game.best) { Game.best = d; localStorage.setItem('hc_best', d); }
   // bank the coins earned this run
   Save.addCoins(Game.coinsCollected);
   document.getElementById('goTitle').textContent = reason;
   document.getElementById('goDist').textContent = d;
   document.getElementById('goCoins').textContent = Game.coinsCollected;
-  document.getElementById('goBest').textContent = Game.best;
+  document.getElementById('goBest').textContent = Game.mode==='endless' ? Game.bestEndless : Game.best;
   document.getElementById('gameover').classList.remove('hidden');
   document.getElementById('topbar').style.display = 'none';
   document.getElementById('pauseBtn').style.display = 'none';
   document.getElementById('soundBtn').style.display = 'none';
+  document.getElementById('questChip').style.display = 'none';
   Audio2.engineOff();
   if (reason === 'Разбился!') Audio2.crash();
 }
@@ -709,6 +843,19 @@ window.addEventListener('keyup', e=>{
 // ---------- Menu / tabs / vehicles / shop ----------
 const COIN = '<span class="coin-ico mini"></span>';
 function refreshBank(){ document.getElementById('bankCoins').textContent = Save.data.coins; }
+
+// mode selector (Заезд / Бесконечный)
+Game.mode = localStorage.getItem('hc_mode') || 'run';
+function refreshModeSeg(){
+  document.querySelectorAll('#modeSeg .m').forEach(m=>{
+    m.classList.toggle('on', m.dataset.mode===Game.mode);
+  });
+  updateBest();
+}
+document.querySelectorAll('#modeSeg .m').forEach(m=>{
+  m.onclick = ()=>{ Game.mode = m.dataset.mode; localStorage.setItem('hc_mode', Game.mode); refreshModeSeg(); };
+});
+refreshModeSeg();
 
 function buildVehiclePicker() {
   const row = document.getElementById('vehRow');
@@ -768,6 +915,11 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'31.07.2026, 20:07', items:[
+    '♾️ Новый режим «Бесконечный»: карта генерится без конца, сложность плавно растёт.',
+    '🎯 Квесты по пути: собери монеты, сделай сальто, заедь в шахту, перепрыгни пропасть.',
+    '⛏️ События на трассе: шахты с самоцветами, трамплины и пропасти.',
+  ]},
   { date:'31.07.2026, 18:10', items:[
     '🚗 У каждой машины свой силуэт: внедорожник, багги с каркасом, грузовик с кузовом.',
     '🌦️ Погода под биом: снегопад в снегах, песчаные порывы в пустыне, пыльца на лугу.',
@@ -806,13 +958,21 @@ document.getElementById('quitBtn').onclick = ()=>{ Game.state='menu';
   document.getElementById('menu').classList.remove('hidden');
   document.getElementById('topbar').style.display='none';
   document.getElementById('pauseBtn').style.display='none';
-  document.getElementById('soundBtn').style.display='none'; rebuildMenu(); };
+  document.getElementById('soundBtn').style.display='none';
+  document.getElementById('questChip').style.display='none'; rebuildMenu(); };
 function pauseGame(){ if(Game.state!=='play')return; Game.state='pause'; Audio2.engineOff();
   document.getElementById('pause').classList.remove('hidden'); }
 function resumeGame(){ if(Game.state!=='pause')return; Game.state='play'; lastT=performance.now();
   document.getElementById('pause').classList.add('hidden'); }
 document.getElementById('pauseBtn').onclick = pauseGame;
 document.getElementById('resumeBtn').onclick = resumeGame;
+
+// GamePass iframe integration: keep standalone/PWA unchanged, expose a safe exit in the hub.
+const gamepassBtn = document.getElementById('gamepassBtn');
+if (window.parent !== window) {
+  gamepassBtn.style.display = 'inline-block';
+  gamepassBtn.onclick = ()=> window.parent.postMessage('hexland:exit', window.location.origin);
+}
 
 // ---------- Sound toggle + audio unlock on first gesture ----------
 const soundBtn = document.getElementById('soundBtn');
@@ -825,7 +985,7 @@ function unlockAudio(){ if(!Audio2.muted){ Audio2.init(); Audio2.resume(); } }
 window.addEventListener('pointerdown', unlockAudio, {once:false});
 window.addEventListener('keydown', unlockAudio, {once:false});
 
-function updateBest(){ document.getElementById('best').textContent = Game.best; }
+function updateBest(){ document.getElementById('best').textContent = Game.mode==='endless' ? Game.bestEndless : Game.best; }
 
 // ---------- Update loop ----------
 let lastT = performance.now();
@@ -849,6 +1009,12 @@ function frame(now) {
       if (Car.pendingFlips >= 1){ bonus += Car.pendingFlips*25; msg = Car.pendingFlips>1?`Двойное сальто! +${bonus}`:`Сальто! +${bonus}`; }
       else if (Car.lastAirTime > 0.85){ bonus += 8; msg = `В воздухе! +8`; }
       if (bonus>0){ Game.coinsCollected += bonus; toast('🎯 '+msg); Audio2.bonus(); }
+      // quests: flips, air distance, gap jumps
+      if (Game.mode==='endless'){
+        if (Car.pendingFlips>=1) Quest.add('flip', Car.pendingFlips);
+        Quest.air(Car.lastAirDist||0);
+        if (Game._pendingJumpPit && Car.x > Game._pendingJumpPit.x1){ Quest.add('jump',1); Game._pendingJumpPit=null; }
+      }
     }
 
     // engine sound
@@ -870,17 +1036,30 @@ function frame(now) {
     // collectibles
     genItems(Car.x + 2500);
     for (const c of coins){
-      if(!c.taken && Math.hypot(c.x-Car.x, c.y-Car.y) < 46){ c.taken=true; Game.coinsCollected++; Audio2.coin(); }
+      if(!c.taken && Math.hypot(c.x-Car.x, c.y-Car.y) < 46){ c.taken=true; Game.coinsCollected++; Audio2.coin();
+        if(Game.mode==='endless') Quest.add('coins',1); }
     }
     for (const f of fuels){
       if(!f.taken && Math.hypot(f.x-Car.x, f.y-Car.y) < 52){ f.taken=true;
         Game.fuel = Math.min(Car.cfg.maxFuel, Game.fuel+35); toast('+Топливо'); Audio2.fuel(); }
     }
 
+    // endless-mode events & quests: mine entry, pit jump setup, distance quest
+    if (Game.mode==='endless'){
+      Quest.tickDistance();
+      const feat = Terrain.featureAt(Car.x);
+      if (feat){
+        if (feat.type==='mine' && Game._lastMine!==feat){ Game._lastMine=feat; Quest.add('mine',1); toast('⛏️ Шахта'); }
+        // arm a pit-jump: airborne near the take-off lip
+        if (feat.type==='pit' && Car.airborneTime>0 && Car.x < feat.x0+40) Game._pendingJumpPit = feat;
+      }
+    }
+
     // head hit ground => game over (flip)
     checkCrash();
 
     // HUD
+    if (Game.mode==='endless') Quest._render();
     document.getElementById('biomeLabel').textContent = biomeAt(Game.distance).name;
     document.getElementById('dist').textContent = Math.floor(Game.distance);
     document.getElementById('coinCount').textContent = Game.coinsCollected;
@@ -966,6 +1145,9 @@ function render() {
   // terrain
   drawTerrain();
 
+  // endless-mode structures (mines, ramps, pits)
+  if (Terrain.mode==='endless') drawFeatures();
+
   // trees & bushes on the ground
   drawDecorations();
 
@@ -979,6 +1161,79 @@ function render() {
 
   // weather ambience (screen space, on top of the world)
   drawWeather();
+}
+
+// ---------- Endless-mode structures ----------
+function drawFeatures(){
+  const left = Game.camX - 60, right = Game.camX + W + 60;
+  for (const f of Terrain.features){
+    if (f.x1 < left || f.x0 > right) continue;
+    if (f.type==='mine') drawMine(f);
+    else if (f.type==='ramp') drawRamp(f);
+    else if (f.type==='pit') drawPit(f);
+  }
+}
+function drawMine(f){
+  const gy0 = Terrain.heightAt(f.x0), gy1 = Terrain.heightAt(f.x1);
+  // entrance / exit portals (wooden frames)
+  const drawPortal = (x, gy)=>{
+    ctx.fillStyle='#6b4a25';
+    ctx.fillRect(x-6, gy-96, 12, 100);
+    ctx.fillStyle='#4a3117'; ctx.fillRect(x-26, gy-96, 52, 14);
+  };
+  drawPortal(f.x0, gy0); drawPortal(f.x1, gy1);
+  // support beams along the corridor + a mine-cart rail
+  ctx.strokeStyle='#5a3b1c'; ctx.lineWidth=5;
+  for (let x=f.x0+40; x<f.x1-20; x+=64){
+    const gy = Terrain.heightAt(x);
+    ctx.fillStyle='#6b4a25';
+    ctx.fillRect(x-4, gy-70, 8, 74);
+    ctx.fillRect(x+52-4, gy-70, 8, 74);
+    ctx.fillRect(x-8, gy-74, 68, 9);        // cross beam
+  }
+  // rail
+  ctx.strokeStyle='#8a8a8a'; ctx.lineWidth=3;
+  ctx.beginPath(); let first=true;
+  for (let x=f.x0+10; x<=f.x1-10; x+=8){ const y=Terrain.heightAt(x)-3; if(first){ctx.moveTo(x,y);first=false;} else ctx.lineTo(x,y);} ctx.stroke();
+  // dark ambiance inside the mine + glowing gems
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(f.x0, Terrain.heightAt(f.x0));
+  for(let x=f.x0;x<=f.x1;x+=8){ Terrain.ensure(x); ctx.lineTo(x, Terrain.heightAt(x)); }
+  ctx.lineTo(f.x1, Terrain.heightAt(f.x1)+260); ctx.lineTo(f.x0, Terrain.heightAt(f.x0)+260); ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle='rgba(20,12,30,0.45)'; ctx.fillRect(f.x0,-2000,f.x1-f.x0,4000);
+  for (let x=f.x0+50; x<f.x1-30; x+=90){
+    const gy=Terrain.heightAt(x); const gx=x+30;
+    ctx.fillStyle='#4fd0ff'; ctx.globalAlpha=0.9;
+    ctx.beginPath(); ctx.moveTo(gx,gy-8); ctx.lineTo(gx+5,gy-2); ctx.lineTo(gx,gy+6); ctx.lineTo(gx-5,gy-2); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha=0.25; ctx.beginPath(); ctx.arc(gx,gy-1,11,0,7); ctx.fill(); ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+function drawRamp(f){
+  // wooden launch ramp on the up-slope (first 3 segments)
+  const x0=f.x0, x2=f.x0+3*Terrain.seg;
+  const y0=Terrain.heightAt(x0), y2=Terrain.heightAt(x2);
+  ctx.fillStyle='#8a5a2b';
+  ctx.beginPath();
+  ctx.moveTo(x0, y0+6); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2+14); ctx.lineTo(x0, y0+20); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#b5793b';
+  for(let x=x0; x<x2; x+=18){ const t=(x-x0)/(x2-x0); const y=y0+(y2-y0)*t; ctx.fillRect(x, y-2, 3, 8); }
+  // little "jump!" arrow chevrons above the lip
+  ctx.fillStyle='rgba(255,213,79,0.9)';
+  ctx.beginPath(); ctx.moveTo(x2-6,y2-30); ctx.lineTo(x2+6,y2-22); ctx.lineTo(x2-6,y2-14); ctx.closePath(); ctx.fill();
+}
+function drawPit(f){
+  // darker rocky walls to read the chasm
+  ctx.strokeStyle='rgba(40,28,18,0.5)'; ctx.lineWidth=6;
+  ctx.beginPath(); let first=true;
+  for(let x=f.x0; x<=f.x1; x+=6){ const y=Terrain.heightAt(x); if(first){ctx.moveTo(x,y);first=false;} else ctx.lineTo(x,y);} ctx.stroke();
+  // warning sign at the near lip
+  const sx=f.x0-10, sy=Terrain.heightAt(f.x0-10);
+  ctx.fillStyle='#e6b800'; ctx.beginPath();
+  ctx.moveTo(sx, sy-40); ctx.lineTo(sx+13, sy-16); ctx.lineTo(sx-13, sy-16); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#3a2a00'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('!', sx, sy-24);
 }
 
 // ---------- Weather particles per biome ----------
@@ -1279,6 +1534,7 @@ setInterval(()=>{Game.time+=0.05;},50);
 
 // prevent context menu / drag on gameplay
 document.addEventListener('contextmenu', e=>{ if(e.target===canvas) e.preventDefault(); });
+document.addEventListener('selectionstart', e=>{ if(e.target===canvas) e.preventDefault(); });
 document.addEventListener('dragstart', e=>e.preventDefault());
 document.addEventListener('gesturestart', e=>e.preventDefault());
 
