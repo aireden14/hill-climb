@@ -163,13 +163,16 @@
     font-size:19px; font-weight:800; color:#ffe680; margin-bottom:12px; }
   .bank .coin-ico { width:20px; height:20px; }
 
-  .modeseg { display:flex; gap:6px; background:rgba(0,0,0,.22); border-radius:14px;
+  .modeseg { display:flex; flex-wrap:wrap; gap:6px; background:rgba(0,0,0,.22); border-radius:14px;
     padding:5px; margin-bottom:14px; }
-  .modeseg .m { flex:1; text-align:center; padding:9px 6px; border-radius:10px; cursor:pointer;
-    font-weight:700; font-size:14px; color:#cfd8e3; transition:.15s; }
+  .modeseg .m { flex:1; min-width:0; text-align:center; padding:9px 6px; border-radius:10px; cursor:pointer;
+    font-weight:700; font-size:13px; color:#cfd8e3; transition:.15s; }
+  .modeseg .m.wide { flex-basis:100%; }
   .modeseg .m .sub { font-size:10px; opacity:.7; font-weight:600; display:block; margin-top:2px; }
   .modeseg .m.on { background:linear-gradient(180deg,#7fd0ff,#3a9be0); color:#04263c;
     box-shadow:0 4px 12px rgba(58,155,224,.4); }
+  .modeseg .m.wide.on { background:linear-gradient(180deg,#8de0b4,#2fa36b); color:#04301e;
+    box-shadow:0 4px 12px rgba(47,163,107,.4); }
 
   #questChip {
     position: fixed; top: calc(58px + env(safe-area-inset-top,0px)); left: 50%;
@@ -220,7 +223,7 @@
     <div class="fuel-wrap"><div id="fuelBar"></div></div>
     <div class="coins"><span class="coin-ico"></span><span id="coinCount">0</span></div>
   </div>
-  <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub">РЕКОРД <span id="best">0</span> м</div><div class="sub" id="biomeLabel" style="margin-top:2px;color:#ffe680"></div></div>
+  <div class="stat"><div class="big"><span id="dist">0</span> м</div><div class="sub"><span id="bestLabel">РЕКОРД</span> <span id="best">0</span> <span id="bestUnit">м</span></div><div class="sub" id="biomeLabel" style="margin-top:2px;color:#ffe680"></div></div>
   <div style="width:150px"></div>
 </div>
 <div id="questChip"></div>
@@ -247,6 +250,7 @@
       <div class="modeseg" id="modeSeg">
         <div class="m on" data-mode="run">🏁 Заезд<span class="sub">на рекорд</span></div>
         <div class="m" data-mode="endless">♾️ Бесконечный<span class="sub">квесты и события</span></div>
+        <div class="m wide" data-mode="vibe">🌴 Вайбовая езда<span class="sub">без аварий и топлива, простые задания</span></div>
       </div>
       <div class="veh-row" id="vehRow"></div>
       <div class="shop" id="shop"></div>
@@ -257,9 +261,10 @@
     <div class="tabpane" id="tab-how">
       <p style="text-align:left">
         <b>▶ (справа)</b> — газ, ехать вперёд.<br>
-        <b>◀ (слева)</b> — тормоз / задний ход.<br>
+        <b>◀ (слева)</b> — тормоз, а когда машина почти встала — <b>задний ход</b>.<br>
         На клавиатуре — <b>стрелки ←/→</b>.<br><br>
-        Наклоняй машину в воздухе газом/тормозом, чтобы приземлиться на колёса. Следи за топливом — жёлтые канистры пополняют бак.<br><br>
+        <b>В воздухе:</b> газ поднимает нос вверх (сальто назад), тормоз опускает нос вниз. Отпусти обе педали — вращение само успокоится, так проще поймать колёса.<br><br>
+        Застрял носом вверх на подъёме — придержи <b>◀</b>, скатись назад и возьми разгон. Следи за топливом — жёлтые канистры пополняют бак.<br><br>
         Крути <b>сальто</b> ради бонусных монет. Собранные монеты копятся в гараже — трать их на <b>прокачку</b> машины и разблокировку новых. Чем дальше едешь, тем сменяются <b>биомы</b>: луг, пустыня, снег.
       </p>
     </div>
@@ -383,21 +388,23 @@ const Terrain = {
     this.amp = Math.max(70, H * 0.14);
     this.pts = [];
     this.features = [];
-    // first feature only after a warm-up stretch (endless only)
-    this.nextFeatIdx = (this.mode==='endless') ? 46 : 1e9;
+    // first feature only after a long warm-up stretch (endless only) — you need room to get up to speed
+    this.nextFeatIdx = (this.mode==='endless') ? 130 : 1e9;
     // flat start
     for (let i = 0; i < 12; i++) this.pts.push(this.baseY);
     for (let i = 12; i < 300; i++) this.pts.push(null);
     this._fillFrom(12);
   },
   _fillFrom(startIdx) {
-    let phase = startIdx * 0.13;
+    const chill = this.mode === 'vibe';               // vibe: long soft rollers, never gets harder
+    let phase = startIdx * (chill ? 0.075 : 0.13);
     for (let i = startIdx; i < this.pts.length; i++) {
       const diff = (i - 12);
-      const rough = Math.min(1, diff / 60);            // difficulty ramps up
-      phase += 0.11 + Math.random()*0.05;
+      const rough = chill ? 0.12 : Math.min(1, diff / 60);   // difficulty ramps up (not in vibe)
+      phase += chill ? 0.062 : 0.11 + Math.random()*0.05;
       const wave = Math.sin(phase)*0.6 + Math.sin(phase*0.37+1.3)*0.4;
-      const target = this.baseY - wave * this.amp * (0.35 + rough) + (Math.random()-0.5)*20*rough;
+      const amp = chill ? this.amp*0.4 : this.amp;
+      const target = this.baseY - wave * amp * (0.35 + rough) + (chill ? 0 : (Math.random()-0.5)*20*rough);
       this.pts[i] = target;
     }
     if (this.mode==='endless') this._injectFeatures(startIdx);
@@ -425,26 +432,27 @@ const Terrain = {
         this.features.push({type:'ramp', s, e:s+6, x0:s*this.seg, x1:(s+6)*this.seg});
       } else if (roll < 0.55 + prog*0.20){             // PIT / chasm (пропасть)
         span = 4;
-        const depth = amp*(1.1 + prog*0.6);
-        this.pts[s]   = base - amp*0.15;               // small take-off lip
+        const depth = amp*(0.75 + prog*0.9);           // early pits are shallow, they deepen with progress
+        this.pts[s]   = base - amp*0.28;               // take-off lip you can actually launch off
         this.pts[s+1] = base + depth;
         this.pts[s+2] = base + depth;
         this.pts[s+3] = base;
         this.features.push({type:'pit', s, e:s+4, x0:s*this.seg, x1:(s+4)*this.seg});
       } else {                                         // MINE (шахта)
-        span = 18;
-        const dip = amp*1.15;
+        span = 20;
+        const dip = amp*1.0;
+        const ramp = 5;                                 // smoothstep lips — a sharp edge just launched you nose-first
         for (let k=0;k<span;k++){
           let h;
-          if (k<3)       h = base + dip*(k/3);          // descend in
-          else if (k>=span-3) h = base + dip*((span-1-k)/3); // ascend out
-          else           h = base + dip + Math.sin(k*1.1)*amp*0.28; // rough corridor
+          if (k < ramp){ const u = k/ramp;             h = base + dip*(u*u*(3-2*u)); }        // descend in
+          else if (k >= span-ramp){ const u = (span-1-k)/ramp; h = base + dip*(u*u*(3-2*u)); } // ascend out
+          else           h = base + dip + Math.sin(k*0.9)*amp*0.18; // gently rough corridor
           this.pts[s+k] = h;
         }
         this.features.push({type:'mine', s, e:s+span, x0:s*this.seg, x1:(s+span)*this.seg});
       }
-      // gap before next feature shrinks with progress
-      const gap = Math.max(11, Math.round(30 - prog*16)) + (Math.random()*8|0);
+      // gap before next feature shrinks with progress, but never gets claustrophobic
+      const gap = Math.max(17, Math.round(38 - prog*18)) + (Math.random()*8|0);
       this.nextFeatIdx = s + span + gap;
     }
   },
@@ -579,6 +587,21 @@ const Audio2 = {
 };
 
 // ---------- Car physics ----------
+// handling tuning
+const AIR_TORQUE   = 1400;  // in-air pitch authority (gas = nose up, brake = nose down)
+const REVERSE_VT   = 45;    // px/s of forward roll above which the left pedal is a brake, not reverse
+const REVERSE_POWER= 0.6;   // reverse gear is weaker than forward
+const CRASH_ANGLE  = 1.35;  // rad (~77°) — below this a head scrape is survivable, not a crash
+const VIBE_TOP     = 440;   // px/s soft top speed in vibe mode — cruising, not racing
+
+// normalize any angle to (-PI, PI]
+function normAngle(a){
+  a = a % (Math.PI*2);
+  if (a > Math.PI) a -= Math.PI*2;
+  if (a <= -Math.PI) a += Math.PI*2;
+  return a;
+}
+
 const Car = {
   x:0, y:0, vx:0, vy:0, angle:0, angVel:0,
   wheels:[],   // {lx,ly, x,y, spin, onGround}
@@ -641,14 +664,30 @@ const Car = {
         if (Fn < 0) Fn = 0;
         let Nfx = nx*Fn, Nfy = ny*Fn;
 
-        // engine drive along tangent
-        const drive = throttle * c.engine;
+        // tangential velocity of the contact patch (needed before we decide brake vs reverse)
+        const vt = wvx*tx + wvy*ty;
+
+        // gearbox: gas = forward; left pedal = brake while rolling forward,
+        // then engages REVERSE once the car is nearly stopped or already rolling back
+        let drive = 0, fricK;
+        if (throttle > 0){
+          drive = throttle * c.engine;
+          fricK = 0.4;
+        } else if (throttle < 0){
+          if (vt > REVERSE_VT){          // still rolling forward → brake, no reverse torque yet
+            fricK = 6;
+          } else {                        // stopped / rolling back → real reverse gear
+            drive = throttle * c.engine * REVERSE_POWER;
+            fricK = 0.5;
+          }
+        } else {
+          fricK = 1.6;
+        }
         Nfx += tx * drive;
         Nfy += ty * drive;
 
         // rolling/brake friction along tangent (kills sliding when braking or coasting)
-        const vt = wvx*tx + wvy*ty;
-        let fric = -vt * (throttle < 0 ? 6 : (throttle>0?0.4:1.6)) * c.mass;
+        let fric = -vt * fricK * c.mass;
         const maxF = Math.abs(Fn)*(1.4 + (c.gripBonus||0)*0.22);   // upgraded grip = more traction
         if (fric > maxF) fric = maxF; if (fric < -maxF) fric = -maxF;
         Nfx += tx*fric; Nfy += ty*fric;
@@ -656,19 +695,20 @@ const Car = {
         fx += Nfx; fy += Nfy;
         torque += rx*Nfy - ry*Nfx;
 
-        // wheel spin visual
-        w.spin += (vt/c.wheelR) * dt + throttle*4*dt;
+        // wheel spin visual (drive slip only when the engine is actually pushing)
+        w.spin += (vt/c.wheelR) * dt + Math.sign(drive)*4*dt;
       } else {
         w.spin += this.vx/c.wheelR * dt;
       }
     }
 
-    // air control: throttle tilts the car; track rotation + air distance
+    // air control: gas pitches the NOSE UP (backflip), brake pitches it DOWN (frontflip) —
+    // same direction the wheelie goes on the ground, so the pedals never feel inverted
     if (!anyGround) {
       if (this.airborneTime === 0) this.airStartX = this.x;   // just left the ground
       this.airborneTime += dt;
       this.airRotation += this.angVel * dt;
-      torque += throttle * c.mass * 175;
+      torque -= throttle * c.mass * AIR_TORQUE;
     } else {
       if (this.airborneTime > 0.35) {   // just landed after real air-time
         this.lastAirTime = this.airborneTime;
@@ -688,9 +728,18 @@ const Car = {
     // quadratic air drag on forward speed (keeps top speed sane)
     this.vx -= Math.sign(this.vx) * this.vx*this.vx * 0.00028 * dt;
 
-    // damping — stronger angular damping in the air for controllable flips
+    // vibe mode is a cruise, not a race — capped speed keeps it calm and the errands reachable
+    if (Game.mode === 'vibe'){
+      if (this.vx >  VIBE_TOP) this.vx =  VIBE_TOP;
+      if (this.vx < -VIBE_TOP*0.7) this.vx = -VIBE_TOP*0.7;
+    }
+
+    // damping — expressed per second so the feel doesn't depend on the sub-step count.
+    // Holding a pedal in the air keeps the car responsive; letting go settles the spin
+    // quickly so you can line up a landing.
     this.vx *= 0.999;
-    this.angVel *= anyGround ? 0.995 : 0.985;
+    const angDamp = anyGround ? 0.9 : (throttle === 0 ? 3.5 : 0.8);
+    this.angVel *= Math.exp(-angDamp * dt);
 
     this.x += this.vx*dt;
     this.y += this.vy*dt;
@@ -725,10 +774,12 @@ function startGame() {
   Game.coinsCollected = 0;
   Game.distance = 0;
   Game.throttle = 0;
+  ZOOM = 1;
   Game.camX = Car.x - W*0.35;
   Game.camY = Car.y - H*0.5;
   Game._lastMine = null; Game._pendingJumpPit = null;
   if (Game.mode==='endless') Quest.reset(); else Quest.clear();
+  if (Game.mode==='vibe') Vibe.reset(); else Vibe.clear();
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('gameover').classList.add('hidden');
   document.getElementById('pause').classList.add('hidden');
@@ -781,6 +832,139 @@ const Quest = {
     el.innerHTML = `<span class="q-ico">${a.ico}</span><span class="q-txt">${a.label}${showProg?` <b>${Math.min(this.progress,a.target)}/${a.target}</b>`:''}</span>`;
   }
 };
+
+// ---------- Vibe mode: chill drive, minimal difficulty, small friendly errands ----------
+const VIBE_TASKS = [
+  { id:'taxi',  ico:'🚕', label:()=>'Подвези пассажира',                     reward:45 },
+  { id:'nohit', ico:'🚸', gen:()=>200+ (Math.random()*150|0), label:t=>`Проедь ${t} м, никого не сбив`, reward:35 },
+  { id:'coins', ico:'🪙', gen:()=>6 + (Math.random()*6|0),    label:t=>`Собери ${t} монет`,             reward:30 },
+  { id:'stop',  ico:'🛑', label:()=>'Притормози у знака',                    reward:35 },
+  { id:'view',  ico:'🏞️', label:()=>'Доедь до смотровой площадки',           reward:40 },
+];
+const Vibe = {
+  peds:[], marker:null, riding:false, task:null, progress:0, mark:0, done:0, nextPedX:0, last:null,
+
+  reset(){
+    this.peds = []; this.marker = null; this.riding = false;
+    this.done = 0; this.last = null;
+    this.nextPedX = Car.x + 420;
+    this.pick();
+  },
+  clear(){ this.task = null; this.peds = []; this.marker = null; this._render(); },
+
+  pick(){
+    let t;
+    do { t = VIBE_TASKS[Math.random()*VIBE_TASKS.length|0]; }
+    while (this.last && t.id === this.last && VIBE_TASKS.length > 1);
+    this.last = t.id;
+    const target = t.gen ? t.gen() : 1;
+    this.task = { id:t.id, ico:t.ico, target, reward:t.reward, label:t.label(target) };
+    this.progress = 0; this.mark = Game.distance; this.riding = false;
+    const ahead = Car.x + 420 + Math.random()*260;
+    if (t.id==='taxi')      this.marker = { type:'passenger', x:ahead };
+    else if (t.id==='stop') this.marker = { type:'stop', x:ahead };
+    else if (t.id==='view') this.marker = { type:'view', x:Car.x + 620 + Math.random()*400 };
+    else                    this.marker = null;
+    this._render();
+  },
+
+  complete(){
+    const r = this.task.reward;
+    Game.coinsCollected += r; this.done++;
+    Save.data.vibeTasks = (Save.data.vibeTasks||0) + 1; Save.persist();
+    toast(`✅ ${this.task.label} — +${r}`);
+    Audio2.bonus();
+    this.marker = null;
+    updateBest();
+    this.pick();
+  },
+
+  // never a game over here — just set the car back on its wheels
+  recover(msg){
+    Terrain.ensure(Car.x);
+    Car.y = Terrain.heightAt(Car.x) - Car.cfg.wheelR - Car.cfg.chH/2 - 6;
+    Car.angle = 0; Car.angVel = 0; Car.vx *= 0.2; Car.vy = 0;
+    Car.upsideTime = 0; Car.airborneTime = 0; Car.airRotation = 0;
+    if (msg) toast(msg);
+  },
+
+  addCoin(){ if (this.task && this.task.id==='coins'){ this.progress++; this._check(); } },
+
+  update(dt){
+    // populate the roadside with people to be careful around
+    while (this.nextPedX < Car.x + 1800){
+      Terrain.ensure(this.nextPedX);
+      this.peds.push({ x:this.nextPedX, y:Terrain.heightAt(this.nextPedX), wave:0, hit:0, seen:false,
+                       cap: PED_CAPS[Math.random()*PED_CAPS.length|0] });
+      this.nextPedX += 300 + Math.random()*420;
+    }
+    if (this.peds.length > 40) this.peds.splice(0, this.peds.length-40);
+
+    const spd = Math.abs(Car.vx);
+    for (const p of this.peds){
+      if (p.wave > 0) p.wave -= dt;
+      if (p.hit) p.hit = Math.min(1, p.hit + dt*4);
+      const near = Math.hypot(p.x - Car.x, (p.y - 22) - Car.y);
+      if (!p.hit && near < 40){
+        if (spd > 130){                                   // ran someone over
+          p.hit = 0.01;
+          toast('🚸 Ой! Аккуратнее с людьми');
+          Audio2.blip(180, 0.18, 'square', 0.18);
+          if (this.task && this.task.id==='nohit'){ this.mark = Game.distance; this.progress = 0; }
+        } else if (!p.seen){                              // rolled past politely — they wave
+          p.seen = true; p.wave = 1.6;
+        }
+      }
+    }
+
+    // task progress
+    const t = this.task;
+    if (!t) return;
+    if (t.id==='nohit'){ this.progress = Math.max(0, Math.floor(Game.distance - this.mark)); this._check(true); }
+
+    const m = this.marker;
+    if (m){
+      Terrain.ensure(m.x);
+      m.y = Terrain.heightAt(m.x);
+      // drove straight past it? move it back ahead so an errand can never dead-end
+      if (Car.x - m.x > 700){
+        m.x = Car.x + 420 + Math.random()*260;
+        toast('↪️ Проехал мимо — ищи впереди');
+        return;
+      }
+      const d = Math.abs(Car.x - m.x);
+      if (m.type==='passenger' && d < 48 && spd < 260){
+        this.riding = true;
+        this.marker = { type:'drop', x: m.x + 260 + Math.random()*220 };
+        toast('🚕 Пассажир сел — вези до флажка');
+      } else if (m.type==='drop' && d < 48 && spd < 130){
+        this.riding = false; this.complete();
+      } else if (m.type==='stop' && d < 62 && spd < 45){
+        this.complete();
+      } else if (m.type==='view' && d < 60){
+        this.complete();
+      }
+    }
+    this._render();
+  },
+
+  _check(silent){
+    if (this.task && this.progress >= this.task.target) this.complete();
+    else if (!silent) this._render();
+  },
+
+  _render(){
+    const el = document.getElementById('questChip');
+    if (!el) return;
+    if (!this.task || Game.mode!=='vibe'){ el.style.display='none'; return; }
+    el.style.display = 'flex';
+    const t = this.task;
+    const prog = (t.id==='nohit'||t.id==='coins') ? ` <b>${Math.min(this.progress,t.target)}/${t.target}</b>` : '';
+    const ride = this.riding ? ' <b>👤</b>' : '';
+    el.innerHTML = `<span class="q-ico">${t.ico}</span><span class="q-txt">${t.label}${prog}${ride}</span>`;
+  }
+};
+const PED_CAPS = ['#e57373','#64b5f6','#ffd54f','#a1887f','#81c784','#ba68c8'];
 
 function endGame(reason) {
   if (Game.state === 'over') return;
@@ -915,6 +1099,13 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'01.08.2026, 14:30', items:[
+    '🎮 Починили управление: в воздухе газ теперь поднимает нос вверх, а тормоз опускает — раньше было наоборот, поэтому машину кидало мордой в землю.',
+    '⏪ Заработал настоящий задний ход: ◀ сначала тормозит, а когда машина почти встала — едет назад.',
+    '🛟 Меньше глупых аварий: чиркнуть каркасом по склону больше не смертельно, и без педалей вращение в воздухе само успокаивается.',
+    '🎥 Камера отъезжает на скорости и в прыжке — видно, куда приземляешься.',
+    '🌴 Новый режим «Вайбовая езда»: пологая трасса, бесконечное топливо, аварий нет, а по пути — простые задания: подвезти пассажира, никого не сбить, притормозить у знака, доехать до смотровой.',
+  ]},
   { date:'31.07.2026, 20:07', items:[
     '♾️ Новый режим «Бесконечный»: карта генерится без конца, сложность плавно растёт.',
     '🎯 Квесты по пути: собери монеты, сделай сальто, заедь в шахту, перепрыгни пропасть.',
@@ -954,6 +1145,9 @@ document.getElementById('menuBtn').onclick = ()=>{ Game.state='menu';
   document.getElementById('gameover').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden'); rebuildMenu(); };
 document.getElementById('quitBtn').onclick = ()=>{ Game.state='menu';
+  // bank whatever was earned this run instead of dropping it on the floor
+  if (Game.coinsCollected){ Save.addCoins(Game.coinsCollected); Game.coinsCollected = 0; }
+  Audio2.engineOff();
   document.getElementById('pause').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden');
   document.getElementById('topbar').style.display='none';
@@ -985,12 +1179,23 @@ function unlockAudio(){ if(!Audio2.muted){ Audio2.init(); Audio2.resume(); } }
 window.addEventListener('pointerdown', unlockAudio, {once:false});
 window.addEventListener('keydown', unlockAudio, {once:false});
 
-function updateBest(){ document.getElementById('best').textContent = Game.mode==='endless' ? Game.bestEndless : Game.best; }
+function updateBest(){
+  const lbl = document.getElementById('bestLabel'), unit = document.getElementById('bestUnit');
+  if (Game.mode==='vibe'){
+    // no records in vibe mode — count the little errands you've done instead
+    document.getElementById('best').textContent = Save.data.vibeTasks || 0;
+    if (lbl) lbl.textContent = 'ЗАДАНИЙ'; if (unit) unit.textContent = '';
+  } else {
+    document.getElementById('best').textContent = Game.mode==='endless' ? Game.bestEndless : Game.best;
+    if (lbl) lbl.textContent = 'РЕКОРД'; if (unit) unit.textContent = 'м';
+  }
+}
 
 // ---------- Update loop ----------
 let lastT = performance.now();
 function frame(now) {
   let dt = (now - lastT)/1000; lastT = now;
+  if (!(dt > 0)) dt = 0;      // guard against a non-monotonic clock
   if (dt > 0.05) dt = 0.05;   // clamp
 
   if (Game.state === 'play') {
@@ -1020,16 +1225,20 @@ function frame(now) {
     // engine sound
     Audio2.engine(Math.abs(Car.vx), Game.throttle);
 
-    // fuel
-    if (Game.throttle !== 0) Game.fuel -= Car.cfg.fuelBurn * Math.abs(Game.throttle) * dt * 3.0;
-    if (Game.fuel <= 0){ Game.fuel = 0; endGame('Кончилось топливо!'); }
+    // fuel (vibe mode never runs dry — that's the whole point of it)
+    if (Game.mode !== 'vibe'){
+      if (Game.throttle !== 0) Game.fuel -= Car.cfg.fuelBurn * Math.abs(Game.throttle) * dt * 3.0;
+      if (Game.fuel <= 0){ Game.fuel = 0; endGame('Кончилось топливо!'); }
+    }
 
     // distance
     Game.distance = Math.max(Game.distance, (Car.x - 200)/22);
 
-    // camera (snappier vertical follow so the car stays centred while climbing)
-    const targetCamX = Car.x - W*0.35;
-    const targetCamY = Car.y - H*0.5;
+    // camera: pulls back with speed and in mid-air so you can see the landing coming
+    const tz = 1 - Math.min(0.2, Math.abs(Car.vx)/3200) - (Car.airborneTime > 0.3 ? 0.07 : 0);
+    ZOOM += (tz - ZOOM) * Math.min(1, dt*2.5);
+    const targetCamX = Car.x - (W/ZOOM)*0.35;
+    const targetCamY = Car.y - (H/ZOOM)*0.5;
     Game.camX += (targetCamX - Game.camX)*Math.min(1,dt*7);
     Game.camY += (targetCamY - Game.camY)*Math.min(1,dt*7);
 
@@ -1037,7 +1246,8 @@ function frame(now) {
     genItems(Car.x + 2500);
     for (const c of coins){
       if(!c.taken && Math.hypot(c.x-Car.x, c.y-Car.y) < 46){ c.taken=true; Game.coinsCollected++; Audio2.coin();
-        if(Game.mode==='endless') Quest.add('coins',1); }
+        if(Game.mode==='endless') Quest.add('coins',1);
+        if(Game.mode==='vibe') Vibe.addCoin(); }
     }
     for (const f of fuels){
       if(!f.taken && Math.hypot(f.x-Car.x, f.y-Car.y) < 52){ f.taken=true;
@@ -1055,8 +1265,11 @@ function frame(now) {
       }
     }
 
-    // head hit ground => game over (flip)
-    checkCrash();
+    // vibe mode: people on the roadside + gentle errands
+    if (Game.mode==='vibe') Vibe.update(dt);
+
+    // head hit ground => game over (flip); in vibe mode it just rights the car
+    checkCrash(dt);
 
     // HUD
     if (Game.mode==='endless') Quest._render();
@@ -1066,7 +1279,8 @@ function frame(now) {
     const fb = document.getElementById('fuelBar');
     const pct = Game.fuel/Car.cfg.maxFuel*100;
     fb.style.width = pct+'%';
-    fb.style.background = pct<20 ? 'linear-gradient(90deg,#ff5252,#ff1744)'
+    fb.style.background = Game.mode==='vibe' ? 'linear-gradient(90deg,#7fd0ff,#3a9be0)'
+      : pct<20 ? 'linear-gradient(90deg,#ff5252,#ff1744)'
       : pct<45 ? 'linear-gradient(90deg,#ffca28,#ffa000)'
       : 'linear-gradient(90deg,#7dd83f,#4caf50)';
   }
@@ -1075,16 +1289,26 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-function checkCrash() {
+function checkCrash(dt) {
   const c = Car.cfg;
   // driver head position (top of chassis)
   const cos=Math.cos(Car.angle), sin=Math.sin(Car.angle);
   const hx = Car.x + (-c.wheelBase*0.15)*cos - (-c.chH*0.9)*sin;
   const hy = Car.y + (-c.wheelBase*0.15)*sin + (-c.chH*0.9)*cos;
   Terrain.ensure(hx);
-  if (hy > Terrain.heightAt(hx) - 2) {
-    // only crash if actually upside-ish and head buried
-    endGame('Разбился!');
+  const tilt = Math.abs(normAngle(Car.angle));
+  const headDown = hy > Terrain.heightAt(hx) - 2;
+
+  // scraping the roll cage on a steep wall is survivable; only a real flip kills you
+  if (headDown && tilt > CRASH_ANGLE) {
+    if (Game.mode === 'vibe') Vibe.recover('Перевернулся — поставили обратно 🙂');
+    else endGame('Разбился!');
+    return;
+  }
+  // vibe mode: also un-stick a car resting on its roof, no game over ever
+  if (Game.mode === 'vibe'){
+    Car.upsideTime = (tilt > 2.0) ? (Car.upsideTime||0) + dt : 0;
+    if (Car.upsideTime > 1.2) Vibe.recover('Поставили на колёса 🙂');
   }
 }
 
@@ -1116,9 +1340,12 @@ function biomeAt(dist){
     bush:hexLerp(from.bush,to.bush,f), sun:hexLerp(from.sun,to.sun,f) };
 }
 let CB = BIOMES[0];  // current biome for the frame
+let ZOOM = 1;        // camera zoom (1 = default, <1 = pulled back)
+let VL = 0, VR = 0;  // world-space left/right edges of the visible area (for culling)
 
 function render() {
   CB = biomeAt(Game.distance);
+  VL = Game.camX; VR = Game.camX + W/ZOOM;
   // sky gradient
   const sky = ctx.createLinearGradient(0,0,0,H);
   sky.addColorStop(0,CB.sky[0]); sky.addColorStop(0.6,CB.sky[1]); sky.addColorStop(1,CB.sky[2]);
@@ -1140,6 +1367,7 @@ function render() {
   drawClouds();
 
   ctx.save();
+  ctx.scale(ZOOM, ZOOM);
   ctx.translate(-Game.camX, -Game.camY);
 
   // terrain
@@ -1154,6 +1382,9 @@ function render() {
   // collectibles
   drawItems();
 
+  // vibe-mode people & errand markers
+  if (Game.mode==='vibe') drawVibe();
+
   // car
   if (Game.state!=='menu') drawCar();
 
@@ -1165,7 +1396,7 @@ function render() {
 
 // ---------- Endless-mode structures ----------
 function drawFeatures(){
-  const left = Game.camX - 60, right = Game.camX + W + 60;
+  const left = VL - 60, right = VR + 60;
   for (const f of Terrain.features){
     if (f.x1 < left || f.x0 > right) continue;
     if (f.type==='mine') drawMine(f);
@@ -1236,6 +1467,83 @@ function drawPit(f){
   ctx.fillText('!', sx, sy-24);
 }
 
+// ---------- Vibe mode: roadside people & errand markers ----------
+function drawPerson(x, y, cap, opts){
+  const o = opts||{};
+  ctx.save();
+  ctx.translate(x, y);
+  if (o.fallen) ctx.rotate(Math.PI/2 * o.fallen);   // knocked over
+  ctx.lineCap = 'round';
+  // legs
+  ctx.strokeStyle = '#37474f'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-1,-13); ctx.lineTo(-5,0); ctx.moveTo(1,-13); ctx.lineTo(5,0); ctx.stroke();
+  // torso
+  ctx.fillStyle = cap; roundRect(-6,-27,12,16,4); ctx.fill();
+  // waving arm
+  ctx.strokeStyle = cap; ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.moveTo(-5,-24);
+  if (o.wave){ const a = Math.sin(Game.time*9)*0.5; ctx.lineTo(-11 - Math.cos(a)*3, -31 - Math.sin(a)*4); }
+  else ctx.lineTo(-10,-16);
+  ctx.moveTo(5,-24); ctx.lineTo(9,-16); ctx.stroke();
+  // head
+  ctx.fillStyle = '#f4c8a0'; ctx.beginPath(); ctx.arc(0,-33,6.5,0,7); ctx.fill();
+  ctx.fillStyle = cap; ctx.beginPath(); ctx.arc(0,-34.5,7,Math.PI,0); ctx.fill();
+  ctx.restore();
+  // "pick me up" bubble
+  if (o.hail){
+    ctx.save();
+    ctx.globalAlpha = 0.9 + Math.sin(Game.time*4)*0.1;
+    ctx.fillStyle = '#fff'; roundRect(x+6, y-62, 26, 20, 7); ctx.fill();
+    ctx.fillStyle = '#e65100'; ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🚕', x+19, y-52);
+    ctx.restore();
+  }
+}
+function drawVibe(){
+  for (const p of Vibe.peds){
+    if (p.x < VL-60 || p.x > VR+60) continue;
+    drawPerson(p.x, p.y, p.cap, { wave: p.wave>0, fallen: p.hit });
+  }
+  const m = Vibe.marker;
+  if (!m || m.x < VL-90 || m.x > VR+90) return;
+  const gy = m.y != null ? m.y : Terrain.heightAt(m.x);
+  if (m.type==='passenger'){
+    drawPerson(m.x, gy, '#ff8a65', { wave:true, hail:true });
+  } else if (m.type==='drop'){
+    // destination flag
+    ctx.strokeStyle='#546e7a'; ctx.lineWidth=4; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(m.x, gy); ctx.lineTo(m.x, gy-52); ctx.stroke();
+    ctx.fillStyle='#43a047';
+    ctx.beginPath(); ctx.moveTo(m.x+2, gy-52); ctx.lineTo(m.x+30, gy-44); ctx.lineTo(m.x+2, gy-36); ctx.fill();
+    ctx.fillStyle='rgba(67,160,71,.2)';
+    ctx.beginPath(); ctx.ellipse(m.x, gy, 44, 10, 0, 0, 7); ctx.fill();
+  } else if (m.type==='stop'){
+    ctx.strokeStyle='#90a4ae'; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(m.x, gy); ctx.lineTo(m.x, gy-56); ctx.stroke();
+    ctx.fillStyle='#e53935'; ctx.beginPath();
+    for(let i=0;i<8;i++){ const a=i/8*Math.PI*2+Math.PI/8; const px=m.x+Math.cos(a)*19, py=gy-72+Math.sin(a)*19;
+      i?ctx.lineTo(px,py):ctx.moveTo(px,py); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('STOP', m.x, gy-71);
+    ctx.fillStyle='rgba(229,57,53,.18)';
+    ctx.beginPath(); ctx.ellipse(m.x, gy, 58, 11, 0, 0, 7); ctx.fill();
+  } else if (m.type==='view'){
+    // scenic viewpoint: bench + sign
+    ctx.fillStyle='#8d6e63'; roundRect(m.x-24, gy-22, 48, 6, 2); ctx.fill();
+    ctx.fillRect(m.x-20, gy-16, 5, 16); ctx.fillRect(m.x+15, gy-16, 5, 16);
+    ctx.fillStyle='#5d4037'; roundRect(m.x-26, gy-34, 52, 5, 2); ctx.fill();
+    ctx.strokeStyle='#6d4c41'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(m.x+40, gy); ctx.lineTo(m.x+40, gy-54); ctx.stroke();
+    ctx.fillStyle='#ffb74d'; roundRect(m.x+28, gy-72, 30, 24, 6); ctx.fill();
+    ctx.font='15px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🏞️', m.x+43, gy-60);
+    ctx.fillStyle='rgba(255,183,77,.2)';
+    ctx.beginPath(); ctx.ellipse(m.x, gy, 56, 11, 0, 0, 7); ctx.fill();
+  }
+}
+
 // ---------- Weather particles per biome ----------
 let flakes=[];
 function drawWeather(){
@@ -1286,7 +1594,7 @@ function drawParallax(factor, color, baseline){
 function hash(n){ let x = Math.sin(n*127.1)*43758.5453; return x - Math.floor(x); }
 function drawDecorations(){
   const spacing = 150;
-  const left = Game.camX - 60, right = Game.camX + W + 60;
+  const left = VL - 60, right = VR + 60;
   const startI = Math.floor(left/spacing), endI = Math.ceil(right/spacing);
   for (let i = startI; i <= endI; i++){
     const r = hash(i);
@@ -1338,17 +1646,18 @@ function puff(x,y,s){
 }
 
 function drawTerrain(){
-  const left = Game.camX - 40;
-  const right = Game.camX + W + 40;
+  const left = VL - 40;
+  const right = VR + 40;
   ctx.beginPath();
-  ctx.moveTo(left, H + Game.camY + 200);
+  const floor = Game.camY + H/ZOOM + 200;
+  ctx.moveTo(left, floor);
   const step = 8;
   ctx.lineTo(left, Terrain.heightAt(left));
   for (let x = left; x <= right; x += step){
     Terrain.ensure(x);
     ctx.lineTo(x, Terrain.heightAt(x));
   }
-  ctx.lineTo(right, H + Game.camY + 200);
+  ctx.lineTo(right, floor);
   ctx.closePath();
   // dirt body
   const grad = ctx.createLinearGradient(0, Terrain.baseY-100, 0, Terrain.baseY+260);
@@ -1377,7 +1686,7 @@ function drawItems(){
   // coins
   for (const c of coins){
     if (c.taken) continue;
-    if (c.x < Game.camX-40 || c.x > Game.camX+W+40) continue;
+    if (c.x < VL-40 || c.x > VR+40) continue;
     ctx.save();
     ctx.translate(c.x,c.y);
     const w = Math.abs(Math.cos(Game.time*4 + c.x));
@@ -1389,7 +1698,7 @@ function drawItems(){
   // fuel cans
   for (const f of fuels){
     if (f.taken) continue;
-    if (f.x < Game.camX-40 || f.x > Game.camX+W+40) continue;
+    if (f.x < VL-40 || f.x > VR+40) continue;
     ctx.save(); ctx.translate(f.x,f.y);
     const bob = Math.sin(Game.time*3+f.x)*3; ctx.translate(0,bob);
     ctx.fillStyle='#e33'; roundRect(-11,-14,22,26,4); ctx.fill();
