@@ -58,6 +58,13 @@
     cursor: pointer;
   }
   .hud-btn:active, .hud-btn.pressed { transform: scale(.92); filter: brightness(1.12); }
+  /* pulses the pedal that would level the car right now */
+  .hud-btn.hint { animation: pedalHint .5s ease-in-out infinite alternate; }
+  @keyframes pedalHint {
+    from { box-shadow: 0 6px 18px rgba(0,0,0,.28), inset 0 3px 8px rgba(255,255,255,.35), 0 0 0 0 rgba(255,255,255,.9); }
+    to   { box-shadow: 0 6px 18px rgba(0,0,0,.28), inset 0 3px 8px rgba(255,255,255,.35), 0 0 0 13px rgba(255,255,255,0); }
+  }
+  #goTip { font-size: 13px; opacity: .8; margin: -6px 0 10px; line-height: 1.4; display: none; }
   #brake { left: 22px; background: radial-gradient(circle at 40% 30%, #ff8a80, #e53935); }
   #gas   { right: 22px; background: radial-gradient(circle at 40% 30%, #b9f6ca, #2e9e3f); }
   .hud-btn.mini { width: 62px; height: 62px; font-size: 26px; bottom: 132px; border-width: 3px; }
@@ -304,6 +311,7 @@
 <div class="overlay hidden" id="gameover">
   <div class="card">
     <h2 id="goTitle">Игра окончена</h2>
+    <div id="goTip"></div>
     <div class="score-row">
       <div class="cell"><div class="n" id="goDist">0</div><div class="l">метров</div></div>
       <div class="cell"><div class="n" id="goCoins">0</div><div class="l">монет</div></div>
@@ -1188,8 +1196,10 @@ const PED_CAPS = ['#e57373','#64b5f6','#ffd54f','#a1887f','#81c784','#ba68c8'];
 // pass people below this and it counts as driving carefully (about half of cruising speed)
 const PED_SAFE_SPEED = 215;
 
-function endGame(reason) {
+function endGame(reason, tip) {
   if (Game.state === 'over') return;
+  const tipEl = document.getElementById('goTip');
+  if (tipEl){ tipEl.textContent = tip || ''; tipEl.style.display = tip ? 'block' : 'none'; }
   Game.state = 'over';
   const d = Math.floor(Game.distance);
   if (Game.mode==='endless'){ if (d>Game.bestEndless){ Game.bestEndless=d; localStorage.setItem('hc_best_endless', d); } }
@@ -1206,6 +1216,7 @@ function endGame(reason) {
   document.getElementById('soundBtn').style.display = 'none';
   document.getElementById('questChip').style.display = 'none';
   showVibeControls(false);
+  gasBtn.classList.remove('hint'); brakeBtn.classList.remove('hint');
   Radio.stop();
   Audio2.engineOff();
   if (reason === 'Разбился!') Audio2.crash();
@@ -1338,6 +1349,7 @@ const CHANGELOG = [
     '🛫 Трамплин перестал быть обрывом: за гребнем сделан нормальный склон для приземления.',
     '🌀 Гребень больше не закручивает машину сильнее, чем можно отыграть педалями.',
     '📈 Итог: в «Заезде» средняя дистанция 317 → 3100 м, в «Бесконечном» 214 → 405 м.',
+    '💡 Игра теперь подсказывает: как только колесо отрывается и машину кренит, нужная педаль начинает пульсировать. А на экране аварии написано, куда перевернулся и чем это было спасти.',
   ]},
   { date:'01.08.2026, 19:45', items:[
     '🌇 Вайбовая езда: настоящая смена дня и ночи — рассвет, день, закат, звёздная ночь. Солнце и луна идут по небу.',
@@ -1529,6 +1541,10 @@ function frame(now) {
       }
     }
 
+    // teach the pedals: while a wheel is off the ground and the car is tilting,
+    // pulse the pedal that would bring it back level
+    updatePedalHint();
+
     // vibe mode: people on the roadside + gentle errands
     if (Game.mode==='vibe') Vibe.update(dt);
 
@@ -1555,6 +1571,22 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// Pulse whichever pedal would level the car out. Positive angle = nose down, and
+// gas lifts the nose — so nose-down asks for ▶, tipping backwards asks for ◀.
+function updatePedalHint(){
+  let gasHint = false, brakeHint = false;
+  if (Game.state === 'play'){
+    const up = (Car.wheels[0].onGround?0:1) + (Car.wheels[1].onGround?0:1);
+    if (up > 0){
+      const a = normAngle(Car.angle) + Car.angVel*0.25;   // where it's heading, not just where it is
+      if (a >  0.5) gasHint = true;
+      else if (a < -0.5) brakeHint = true;
+    }
+  }
+  gasBtn.classList.toggle('hint', gasHint);
+  brakeBtn.classList.toggle('hint', brakeHint);
+}
+
 function checkCrash(dt) {
   const c = Car.cfg;
   // driver head position (top of chassis)
@@ -1568,7 +1600,13 @@ function checkCrash(dt) {
   // scraping the roll cage on a steep wall is survivable; only a real flip kills you
   if (headDown && tilt > CRASH_ANGLE) {
     if (Game.mode === 'vibe') Vibe.recover('Перевернулся — поставили обратно 🙂');
-    else endGame('Разбился!');
+    else {
+      // say which way it went over and which pedal would have saved it
+      const back = normAngle(Car.angle) < 0;
+      endGame(back ? 'Опрокинулся назад!' : 'Клюнул носом!',
+              back ? 'Как только колесо в воздухе — придержи ◀, он опускает нос.'
+                   : 'Как только колесо в воздухе — дай ▶, он поднимает нос.');
+    }
     return;
   }
   // vibe mode: also un-stick a car resting on its roof, no game over ever
@@ -2418,8 +2456,9 @@ document.addEventListener('gesturestart', e=>e.preventDefault());
 updateBest();
 requestAnimationFrame(frame);
 
-// PWA: register service worker for offline play (secure contexts: https + localhost; ignored on file://)
-if ('serviceWorker' in navigator && window.isSecureContext) {
+// PWA: register service worker for offline play (secure contexts: https + localhost; ignored on file://).
+// Skipped inside an iframe — in the GamePass hub the host owns the origin, and sw.js isn't served there.
+if ('serviceWorker' in navigator && window.isSecureContext && window.parent === window) {
   window.addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(()=>{}));
 }
 </script>

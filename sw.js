@@ -1,5 +1,5 @@
 /* Холм Драйв — service worker for offline play */
-const CACHE = 'holm-drive-v7';
+const CACHE = 'holm-drive-v8';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
