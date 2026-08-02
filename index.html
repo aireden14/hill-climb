@@ -276,7 +276,7 @@
         <b>▶ (справа)</b> — газ, ехать вперёд.<br>
         <b>◀ (слева)</b> — тормоз, а когда машина почти встала — <b>задний ход</b>.<br>
         На клавиатуре — <b>стрелки ←/→</b>.<br><br>
-        <b>В воздухе:</b> газ поднимает нос вверх (сальто назад), тормоз опускает нос вниз. Отпусти обе педали — вращение само успокоится, так проще поймать колёса.<br><br>
+        <b>Как только колесо оторвалось от земли</b> (в прыжке, на гребне, на вилли) педали начинают рулить наклоном: газ поднимает нос вверх, тормоз опускает вниз. Клюёшь носом — дай газ; заваливаешься назад — придержи тормоз. Отпусти обе педали, и вращение само успокоится.<br><br>
         Застрял носом вверх на подъёме — придержи <b>◀</b>, скатись назад и возьми разгон. Следи за топливом — жёлтые канистры пополняют бак.<br><br>
         <b>🌴 В вайбовой езде:</b> кнопка <b>📢</b> (или клавиша <b>H</b>) — клаксон: прохожие машут в ответ, собаки бегут рядом, овцы разбегаются. Кнопка <b>🎵</b> сверху включает и выключает радио. Время суток идёт само — ночью зажигаются фары и окна в домах.<br><br>
         Крути <b>сальто</b> ради бонусных монет. Собранные монеты копятся в гараже — трать их на <b>прокачку</b> машины и разблокировку новых. Чем дальше едешь, тем сменяются <b>биомы</b>: луг, пустыня, снег.
@@ -396,12 +396,14 @@ const Terrain = {
   mode:'run',
   features:[],        // [{type, s, e, x0, x1}] injected structures (endless mode)
   nextFeatIdx: 1e9,
+  phase: 0,           // running wave phase, carried across chunks (see _fillFrom)
   reset(mode) {
     this.mode = mode || 'run';
     this.baseY = H * 0.62;
     this.amp = Math.max(70, H * 0.14);
     this.pts = [];
     this.features = [];
+    this.phase = 12 * 0.13;
     // first feature only after a long warm-up stretch (endless only) — you need room to get up to speed
     this.nextFeatIdx = (this.mode==='endless') ? 130 : 1e9;
     // flat start
@@ -411,7 +413,11 @@ const Terrain = {
   },
   _fillFrom(startIdx) {
     const chill = this.mode === 'vibe';               // vibe: long soft rollers, never gets harder
-    let phase = startIdx * (chill ? 0.075 : 0.13);
+    // Carry the wave phase across chunk boundaries. Recomputing it from the index
+    // (as this used to) left the phase out of step with what the previous chunk
+    // actually accumulated, putting a hard step in the ground at every seam — the
+    // first one landed at ~318 m and killed most runs there.
+    let phase = this.phase;
     for (let i = startIdx; i < this.pts.length; i++) {
       const diff = (i - 12);
       const rough = chill ? 0.12 : Math.min(1, diff / 60);   // difficulty ramps up (not in vibe)
@@ -421,6 +427,7 @@ const Terrain = {
       const target = this.baseY - wave * amp * (0.35 + rough) + (chill ? 0 : (Math.random()-0.5)*20*rough);
       this.pts[i] = target;
     }
+    this.phase = phase;                               // next chunk picks up right here
     if (this.mode==='endless') this._injectFeatures(startIdx);
   },
   // difficulty grows with distance (index): features get closer & rougher
@@ -436,14 +443,18 @@ const Terrain = {
       const roll = Math.random();
       let span;
       if (roll < 0.30 + prog*0.15){                    // JUMP RAMP (перепрыгнуть)
-        span = 6;
-        this.pts[s]   = base - amp*0.35;
-        this.pts[s+1] = base - amp*0.85;
-        this.pts[s+2] = base - amp*1.25;               // lip
-        this.pts[s+3] = base + amp*0.55;               // drop after the lip
-        this.pts[s+4] = base + amp*0.35;
-        this.pts[s+5] = base + amp*0.10;
-        this.features.push({type:'ramp', s, e:s+6, x0:s*this.seg, x1:(s+6)*this.seg});
+        // Run-up, lip, then a LANDING SLOPE. This used to drop 1.8 amp in a single
+        // segment right after the lip — a sheer cliff that flipped the car every time.
+        span = 8;
+        this.pts[s]   = base - amp*0.20;
+        this.pts[s+1] = base - amp*0.55;
+        this.pts[s+2] = base - amp*0.95;
+        this.pts[s+3] = base - amp*1.15;               // lip
+        this.pts[s+4] = base - amp*0.60;               // land here, not in a hole
+        this.pts[s+5] = base - amp*0.15;
+        this.pts[s+6] = base + amp*0.12;
+        this.pts[s+7] = base + amp*0.04;
+        this.features.push({type:'ramp', s, e:s+8, x0:s*this.seg, x1:(s+8)*this.seg});
       } else if (roll < 0.55 + prog*0.20){             // PIT / chasm (пропасть)
         span = 4;
         const depth = amp*(0.75 + prog*0.9);           // early pits are shallow, they deepen with progress
@@ -671,9 +682,11 @@ const Radio = {
 
 // ---------- Car physics ----------
 // handling tuning
-const AIR_TORQUE   = 1400;  // in-air pitch authority (gas = nose up, brake = nose down)
+const AIR_TORQUE   = 2000;  // pitch authority (gas = nose up, brake = nose down)
 const REVERSE_VT   = 45;    // px/s of forward roll above which the left pedal is a brake, not reverse
 const REVERSE_POWER= 0.6;   // reverse gear is weaker than forward
+const ONE_WHEEL_AUTHORITY = 0.75;  // pitch authority left when only one wheel is still down
+const TAKEOFF_SPIN_CAP = 2.2;      // rad/s max spin a crest may fling the car into
 const CRASH_ANGLE  = 1.35;  // rad (~77°) — below this a head scrape is survivable, not a crash
 const VIBE_TOP     = 440;   // px/s soft top speed in vibe mode — cruising, not racing
 
@@ -785,13 +798,26 @@ const Car = {
       }
     }
 
-    // air control: gas pitches the NOSE UP (backflip), brake pitches it DOWN (frontflip) —
-    // same direction the wheelie goes on the ground, so the pedals never feel inverted
+    // Pitch control: gas lifts the NOSE, brake drops it — the same direction the wheelie
+    // goes on the ground, so the pedals never feel inverted.
+    // Authority scales with how many wheels are off the ground. This used to be all-or-
+    // nothing (airborne only), which left the car uncontrollable in the one-wheel state —
+    // and that is exactly where every single crash happened.
+    const wheelsUp = this.wheels.length - (this.wheels[0].onGround?1:0) - (this.wheels[1].onGround?1:0);
+    if (wheelsUp > 0){
+      const authority = wheelsUp >= 2 ? 1 : ONE_WHEEL_AUTHORITY;
+      torque -= throttle * c.mass * AIR_TORQUE * authority;
+    }
+
     if (!anyGround) {
-      if (this.airborneTime === 0) this.airStartX = this.x;   // just left the ground
+      if (this.airborneTime === 0) {
+        this.airStartX = this.x;   // just left the ground
+        // a crest can fling the car into a spin faster than the pedals can ever undo
+        if (this.angVel >  TAKEOFF_SPIN_CAP) this.angVel =  TAKEOFF_SPIN_CAP;
+        if (this.angVel < -TAKEOFF_SPIN_CAP) this.angVel = -TAKEOFF_SPIN_CAP;
+      }
       this.airborneTime += dt;
       this.airRotation += this.angVel * dt;
-      torque -= throttle * c.mass * AIR_TORQUE;
     } else {
       if (this.airborneTime > 0.35) {   // just landed after real air-time
         this.lastAirTime = this.airborneTime;
@@ -821,7 +847,7 @@ const Car = {
     // Holding a pedal in the air keeps the car responsive; letting go settles the spin
     // quickly so you can line up a landing.
     this.vx *= 0.999;
-    const angDamp = anyGround ? 0.9 : (throttle === 0 ? 3.5 : 0.8);
+    const angDamp = wheelsUp === 0 ? 0.9 : (throttle === 0 ? 3.5 : 0.8);
     this.angVel *= Math.exp(-angDamp * dt);
 
     this.x += this.vx*dt;
@@ -1305,6 +1331,14 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 // What's new
 const CHANGELOG = [
+  { date:'02.08.2026, 15:20', items:[
+    '🧱 Убрана невидимая стена: в рельефе на 318 м была ступенька в 73 пикселя (генератор рвал трассу на стыке кусков). Именно в неё разбивалось большинство заездов.',
+    '🎮 Педали наконец работают, когда одно колесо оторвалось от земли. Раньше в этом положении управление отключалось полностью — а там происходили ВСЕ аварии.',
+    '⬆️ Клевок носом теперь вытягивается газом, опрокидывание назад — тормозом. Сила управления поднята.',
+    '🛫 Трамплин перестал быть обрывом: за гребнем сделан нормальный склон для приземления.',
+    '🌀 Гребень больше не закручивает машину сильнее, чем можно отыграть педалями.',
+    '📈 Итог: в «Заезде» средняя дистанция 317 → 3100 м, в «Бесконечном» 214 → 405 м.',
+  ]},
   { date:'01.08.2026, 19:45', items:[
     '🌇 Вайбовая езда: настоящая смена дня и ночи — рассвет, день, закат, звёздная ночь. Солнце и луна идут по небу.',
     '💡 Ночью сами включаются фары, а в домах вдоль дороги загорается тёплый свет в окнах.',
