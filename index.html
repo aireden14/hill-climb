@@ -396,6 +396,8 @@ let selectedVehicle = localStorage.getItem('hc_vehicle') || 'jeep';
 if (!Save.isUnlocked(selectedVehicle)) selectedVehicle = 'jeep';
 
 // ---------- Terrain ----------
+const WORLD_AMP = 78;        // hill amplitude in world px — fixed, never device-dependent
+const VIEW_TARGET_W = 900;   // world px we try to keep on screen, so phones can see ahead too
 const Terrain = {
   seg: 24,            // horizontal spacing between control points (px)
   pts: [],            // control point heights (screen y)
@@ -407,8 +409,11 @@ const Terrain = {
   phase: 0,           // running wave phase, carried across chunks (see _fillFrom)
   reset(mode) {
     this.mode = mode || 'run';
-    this.baseY = H * 0.62;
-    this.amp = Math.max(70, H * 0.14);
+    this.baseY = H * 0.62;      // just where the world sits vertically; the camera follows the car
+    // Hill size must NOT depend on the device. This used to be H*0.14, so a tall phone
+    // screen got ~35% steeper hills than a laptop — the same game was gentle on desktop
+    // and unplayable in the Telegram webview (median run 3100 m vs 174 m).
+    this.amp = WORLD_AMP;
     this.pts = [];
     this.features = [];
     this.phase = 12 * 0.13;
@@ -1350,6 +1355,8 @@ const CHANGELOG = [
     '🌀 Гребень больше не закручивает машину сильнее, чем можно отыграть педалями.',
     '📈 Итог: в «Заезде» средняя дистанция 317 → 3100 м, в «Бесконечном» 214 → 405 м.',
     '💡 Игра теперь подсказывает: как только колесо отрывается и машину кренит, нужная педаль начинает пульсировать. А на экране аварии написано, куда перевернулся и чем это было спасти.',
+    '📱 ГЛАВНОЕ для телефона: крутизна холмов больше не зависит от экрана. Раньше она считалась от его высоты, и на вертикальном телефоне трасса выходила на треть круче, чем на ноутбуке — в Телеграме игра была заметно злее. Теперь везде одинаково, и холмы стали мягче.',
+    '🔭 На узком экране камера отъезжает — видно, что впереди, а не только капот.',
   ]},
   { date:'01.08.2026, 19:45', items:[
     '🌇 Вайбовая езда: настоящая смена дня и ночи — рассвет, день, закат, звёздная ночь. Солнце и луна идут по небу.',
@@ -1507,8 +1514,11 @@ function frame(now) {
     // distance
     Game.distance = Math.max(Game.distance, (Car.x - 200)/22);
 
-    // camera: pulls back with speed and in mid-air so you can see the landing coming
-    const tz = 1 - Math.min(0.2, Math.abs(Car.vx)/3200) - (Car.airborneTime > 0.3 ? 0.07 : 0);
+    // camera: pulls back with speed and in mid-air so you can see the landing coming.
+    // The base zoom also keeps a usable field of view on a narrow phone, where a 1:1
+    // zoom showed barely 400 world px ahead and left no time to react.
+    const baseZoom = Math.min(1, Math.max(0.55, W / VIEW_TARGET_W));
+    const tz = baseZoom * (1 - Math.min(0.2, Math.abs(Car.vx)/3200) - (Car.airborneTime > 0.3 ? 0.07 : 0));
     ZOOM += (tz - ZOOM) * Math.min(1, dt*2.5);
     const targetCamX = Car.x - (W/ZOOM)*0.35;
     const targetCamY = Car.y - (H/ZOOM)*0.5;
